@@ -636,7 +636,8 @@ bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
 void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDraw* prepared,
                            boost::container::static_vector<RingBinding, Shader::NUM_BUFFERS>& out) {
     const PreparedStage* prepared_stage = nullptr;
-    if (prepared && !BbToggle::Disabled(BbToggle::PreparedResources)) {
+    if (prepared && !BbToggle::Disabled(BbToggle::PreparedResources) &&
+        !BbToggle::Disabled(BbToggle::PreparedRing)) {
         for (u32 i = 0; i < prepared->num_stages; ++i) {
             const auto& candidate = prepared->stages[i];
             if (&candidate.program->info == &stage &&
@@ -2111,7 +2112,8 @@ void Rasterizer::OnSubmit() {
 
 const PreparedStage* Rasterizer::FindPreparedStage(const Shader::Info& stage) const {
     // Sharps a draw-preparation worker read from the same flattened user data.
-    if (!bind_prepared || BbToggle::Disabled(BbToggle::PreparedResources)) {
+    if (!bind_prepared || BbToggle::Disabled(BbToggle::PreparedResources) ||
+        BbToggle::Disabled(BbToggle::PreparedBindings)) {
         return nullptr;
     }
     for (u32 i = 0; i < bind_prepared->num_stages; ++i) {
@@ -2416,9 +2418,25 @@ void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
     const PreparedVertexInputs* ready =
         prepared && prepared->vertex.valid && instance.IsVertexInputDynamicState() && fetch &&
                 fetch->attributes.size() == prepared->vertex.count && !FrameCapture::Active() &&
-                !BbToggle::Disabled(BbToggle::PreparedResources)
+                !BbToggle::Disabled(BbToggle::PreparedResources) &&
+                !BbToggle::Disabled(BbToggle::PreparedVertex)
             ? &prepared->vertex
             : nullptr;
+    // The V#s come from a table in guest memory the user data points to, which the register and
+    // flattened user data checks do not cover: Virtual-On rewrites such tables between the
+    // worker's read and the draw (stale vertex streams: geometry scattered, wrong textures).
+    // Read them again now; a few dozen bytes per draw keep the rest of the prepared work.
+    if (ready) {
+        const auto& vs_info = pipeline->GetStage(Shader::SwStage::Vertex);
+        for (u32 i = 0; i < ready->count; ++i) {
+            const auto now = fetch->attributes[i].GetSharp(vs_info);
+            if (std::memcmp(&now, &ready->buffers[i], sizeof(now)) != 0) {
+                ready = nullptr;
+                ++stale_vertex_inputs;
+                break;
+            }
+        }
+    }
     if (ready) {
         attributes.assign(ready->attributes, ready->attributes + ready->count);
         bindings.assign(ready->bindings, ready->bindings + ready->count);

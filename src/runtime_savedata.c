@@ -374,6 +374,47 @@ static int32_t memory_io(void *buffer, uint64_t size, int64_t offset, int write)
 static ABI int32_t memory_get(int32_t user, void *buffer, uint64_t size, int64_t offset) { (void)user; return memory_io(buffer,size,offset,0); }
 static ABI int32_t memory_set(int32_t user, void *buffer, uint64_t size, int64_t offset) { (void)user; return memory_io(buffer,size,offset,1); }
 
+/* Virtual-On (newer SDK): backups are not kept, so there is never one to restore; an unmount
+ * "with backup" is a plain unmount. */
+static ABI int32_t save_check_backup(const void *check) { (void)check; return ERR_NOT_FOUND; }
+static ABI int32_t save_umount_backup(const MountPoint *point) { return save_umount(point); }
+typedef struct { uint64_t blocks, free_blocks; uint8_t reserved[32]; } MountInfo;
+static ABI int32_t save_mount_info(const MountPoint *point, MountInfo *info) {
+    if (!initialized) return ERR_NOT_INITIALIZED;
+    if (!info) return ERR_PARAMETER;
+    pthread_mutex_lock(&lock);
+    int slot=slot_of(point);
+    pthread_mutex_unlock(&lock);
+    if (slot<0) return ERR_NOT_MOUNTED;
+    memset(info,0,sizeof(*info));
+    info->blocks=32768; info->free_blocks=32768; /* 1 GiB of 32 KiB blocks: never "full" */
+    return 0;
+}
+static ABI int32_t save_get_param(const MountPoint *point, uint32_t type, void *buffer, uint64_t size,
+                                  uint64_t *got) {
+    if (!initialized) return ERR_NOT_INITIALIZED;
+    if (!buffer) return ERR_PARAMETER;
+    pthread_mutex_lock(&lock);
+    int slot=slot_of(point);
+    if (slot<0) { pthread_mutex_unlock(&lock); return ERR_NOT_MOUNTED; }
+    Param p; if (read_param(slots[slot].meta,&p)) memset(&p,0,sizeof(p));
+    pthread_mutex_unlock(&lock);
+    const void *field; uint64_t length;
+    switch (type) {
+    case 0: field=&p; length=sizeof(p); break;                          /* ALL */
+    case 1: field=p.title; length=strlen(p.title)+1; break;
+    case 2: field=p.subtitle; length=strlen(p.subtitle)+1; break;
+    case 3: field=p.detail; length=strlen(p.detail)+1; break;
+    case 4: field=&p.user_param; length=4; break;
+    case 5: field=&p.mtime; length=8; break;
+    default: return ERR_PARAMETER;
+    }
+    if (length>size) length=size;
+    memcpy(buffer,field,length);
+    if (got) *got=length;
+    return 0;
+}
+
 static const RuntimeExport exports[]={
     {"sceSaveDataInitialize",save_initialize}, {"sceSaveDataInitialize2",save_initialize},
     {"sceSaveDataInitialize3",save_initialize}, {"sceSaveDataTerminate",save_terminate},
@@ -382,6 +423,8 @@ static const RuntimeExport exports[]={
     {"sceSaveDataDirNameSearch",save_search},
     {"sceSaveDataSetupSaveDataMemory",memory_setup}, {"sceSaveDataGetSaveDataMemory",memory_get},
     {"sceSaveDataSetSaveDataMemory",memory_set},
+    {"sceSaveDataCheckBackupData",save_check_backup}, {"sceSaveDataUmountWithBackup",save_umount_backup},
+    {"sceSaveDataGetMountInfo",save_mount_info}, {"sceSaveDataGetParam",save_get_param},
 };
 uintptr_t runtime_savedata_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }
 void runtime_savedata_report(void) { printf("Runtime: save data mounts=%zu, memory writes=%zu\n",mounts_done,memory_writes); }

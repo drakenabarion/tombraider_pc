@@ -17,7 +17,10 @@ import subprocess
 import sys
 
 PORT = Path(__file__).resolve().parent
-EXECUTABLES = {'u1': 'eboot.bin', 'u2': 'big2-ps4_Shipping.elf', 'u3': 'big3-ps4_Shipping.elf'}
+# Virtual-On Masterpiece (CUSA16156): pjv3.elf runs all three games, chosen by the selector the
+# collection menu passes twice (argv = {sel, sel}); eboot.bin is the collection menu itself.
+EXECUTABLES = {'omg': 'pjv3.elf', 'ot': 'pjv3.elf', 'force': 'pjv3.elf', 'menu': 'eboot.bin'}
+SELECTORS = {'omg': '-bOMG', 'ot': '-bOT', 'force': '-bFORCE'}
 LOADEXEC_EXIT = 101  # runtime_services.c: the game asked for another executable
 
 
@@ -70,7 +73,7 @@ def find_executable(name):
 
 
 def executable_name(value):
-    return EXECUTABLES.get(value.lower(), value) if value else EXECUTABLES['u1']
+    return EXECUTABLES.get(value.lower(), value) if value else EXECUTABLES['omg']
 
 
 def prepare(game, exe, out):
@@ -100,13 +103,9 @@ def main():
     env.setdefault('BB_CONFIG', str(data / 'bbport.ini'))
     # Keyboard, mouse and controller bindings (the launcher's Controls page).
     env.setdefault('BB_INPUT_CONFIG', str(data / 'input.ini'))
-    # The collection's renderer (all three games): the camera velocity pass of the motion blur
-    # (its constants give the motion vectors), the compute pass after the scene is lit, before
-    # the post-processing, where DLSS/FSR/TAA and frame generation take it, and the pass that
-    # writes the finished picture before the UI (docs/upscaler.md).
-    env.setdefault('BB_VELOCITY_PS', 'f4b18264')
-    env.setdefault('BB_UPSCALE_BEFORE_CS', 'aec539f0')
-    env.setdefault('BB_HUDLESS_PS', '484cdbf5')
+    # The upscaler hooks (BB_VELOCITY_PS, BB_UPSCALE_BEFORE_CS, BB_HUDLESS_PS) are Uncharted's
+    # shaders; Virtual-On's are not identified yet, so the upscaler stays off by default.
+    env.setdefault('BB_UPSCALER', 'off')
     if not env.get('BB_FSR411_DIR') and not (PORT / 'fsr4_411').is_dir() and (data / 'fsr4_411').is_dir():
         env['BB_FSR411_DIR'] = str(data / 'fsr4_411')
 
@@ -124,7 +123,11 @@ def main():
     game = Path(env['BB_GAME_DIR'])
     if not (game / 'eboot.bin').is_file():
         fail(f'No eboot.bin in {game}.')
-    exe = executable_name(env.get('BB_EXE', ''))
+    choice = env.get('BB_EXE', '') or 'omg'
+    exe = executable_name(choice)
+    # The game selector, as the collection menu passes it (unless BB_GUEST_ARGS says otherwise).
+    if choice.lower() in SELECTORS and not env.get('BB_GUEST_ARGS'):
+        env['BB_GUEST_ARGS'] = f'{SELECTORS[choice.lower()]} {SELECTORS[choice.lower()]}'
     user_dir = Path(env.get('BB_USER_DIR', data / 'user')).resolve()
     user_dir.mkdir(parents=True, exist_ok=True)
     # GPU caches (shaders, pipelines) beside the saves; read before main(), so set here.

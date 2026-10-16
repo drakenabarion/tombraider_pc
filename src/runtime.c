@@ -180,9 +180,28 @@ static ABI __attribute__((noreturn)) void guest_libc_exit(int status) {
     runtime_report();
     exit(status);
 }
+static uintptr_t resolve_once(const char *name, int is_data);
+/* libkernel (#p#J) and libScePosix (#I#J) export the same POSIX functions under the same NIDs;
+ * newer libc.prx builds (Virtual-On's) import from libkernel what older ones took from
+ * libScePosix, so an unresolved name is retried under the other library. */
 uintptr_t runtime_resolve(const char *name, int is_data) {
+    uintptr_t found=resolve_once(name,is_data);
+    size_t n=strlen(name);
+    if (found || n<5) return found;
+    const char *other=!strcmp(name+n-4,"#p#J") ? "#I#J" : !strcmp(name+n-4,"#I#J") ? "#p#J" : NULL;
+    if (!other) return 0;
+    char alias[96];
+    if (n>=sizeof(alias)) return 0;
+    memcpy(alias,name,n-4); memcpy(alias+n-4,other,5);
+    return resolve_once(alias,is_data);
+}
+static uintptr_t resolve_once(const char *name, int is_data) {
     if (!(capabilities & 1)) return 0;
     if (is_data) {
+        /* __progname: libc.prx's program name for messages (Virtual-On's libc imports it). */
+        static const char progname_text[] = "eboot.bin";
+        static const char *progname = progname_text;
+        if (!strcmp(name, "djxxOmW6-aw#p#J")) return (uintptr_t)&progname;
         static int32_t need_libc_internal = 1; /* SDK marker variable referenced by Fios2 */
         if (!strcmp(name, "f7uOxY9mM1U#p#J")) return (uintptr_t)&stack_canary;
         if (!strcmp(name, "ZT4ODD2Ts9o#libSceLibcInternal")) return (uintptr_t)&need_libc_internal;
@@ -239,6 +258,8 @@ uintptr_t runtime_resolve(const char *name, int is_data) {
     if (file) return file;
     uintptr_t fiber = runtime_fiber_resolve(name);
     if (fiber) return fiber;
+    uintptr_t extra = runtime_extra_resolve(name);
+    if (extra) return extra;
     return bbgpu_resolve(name);
 }
 static const struct { const char *nid, *symbol; } import_names[]={

@@ -23,9 +23,28 @@ def unpack(fmt, data, offset):
     return struct.unpack(fmt, span(data, offset, struct.calcsize(fmt)))
 
 
+def parse_elf(data):
+    """A decrypted dump's plain ELF (what PS4/PS5 dumpers write): the same results as parse_self
+    without the SELF wrapper, so no fake-SELF signing step is needed."""
+    header = unpack('<16sHHIQQQIHHHHHH', data, 0)
+    if header[0][:7] != b'\x7fELF\x02\x01\x01' or header[2] != 62:
+        raise ValueError("expected little-endian x86-64 ELF")
+    if header[9] != 56 or not 0 < header[10] < 256:
+        raise ValueError("unsupported program headers")
+    ph = [dict(zip(('type', 'flags', 'offset', 'vaddr', 'paddr', 'filesz', 'memsz', 'align'),
+                   unpack('<IIQQQQQQ', data, header[5] + i * 56)))
+          for i in range(header[10])]
+    end = max(p['offset'] + p['filesz'] for p in ph)
+    if end > len(data) or end > 512 * 1024 * 1024:
+        raise ValueError("truncated or oversized ELF")
+    return bytearray(data[:end]), header, ph, [], []
+
+
 def parse_self(data):
+    if span(data, 0, 4) == b'\x7fELF':
+        return parse_elf(data)
     if span(data, 0, 4) != b'O\x15=\x1d':
-        raise ValueError("expected PS4 SELF")
+        raise ValueError("expected PS4 SELF or ELF")
     count, = unpack('<H', data, 24)
     base = 32 + count * 32
     header = unpack('<16sHHIQQQIHHHHHH', data, base)

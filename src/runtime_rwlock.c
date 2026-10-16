@@ -142,7 +142,16 @@ static ABI int32_t rw_destroy(Rwlock **handle) {
     }
     pthread_mutex_unlock(&registry_lock); return error(e);
 }
+/* POSIX spellings (Virtual-On's libc.prx imports them from libkernel): errno values, not
+ * SCE_KERNEL codes. */
+static int32_t posix(int32_t result) { return result ? (int32_t)((uint32_t)result & 0xffff) : 0; }
+static ABI int32_t posix_rdlock(Rwlock **r) { return posix(rw_read(r)); }
+static ABI int32_t posix_wrlock(Rwlock **r) { return posix(rw_write(r)); }
+static ABI int32_t posix_unlock(Rwlock **r) { return posix(rw_unlock(r)); }
 uintptr_t runtime_rwlock_resolve(const char *name) {
+    if (!strncmp(name,"iGjsr1WAtI0#",12)) return (uintptr_t)posix_rdlock;
+    if (!strncmp(name,"sIlRvQqsN2Y#",12)) return (uintptr_t)posix_wrlock;
+    if (!strncmp(name,"EgmLo6EWgso#",12)) return (uintptr_t)posix_unlock;
     if (!strcmp(name,"6ULAa0fq4jA#p#J")) return (uintptr_t)rw_init;
     if (!strcmp(name,"BB+kb08Tl9A#p#J")) return (uintptr_t)rw_destroy;
     if (!strcmp(name,"Ox9i0c7L5w0#p#J")) return (uintptr_t)rw_read;
