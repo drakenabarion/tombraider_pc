@@ -103,3 +103,17 @@ if [[ ${1:-} == --test ]]; then
     "$CC" -std=c11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -I. -Isrc tests/test_content.c src/runtime_content.c -o out/content-test
     out/content-test
 fi
+# Optional DLSS (NVIDIA RTX), as in the Bloodborne port: DLSS_SDK_ROOT=<github.com/NVIDIA/DLSS
+# checkout> builds the bridge (gpu/dlss_bridge, the only code using NVIDIA's SDK) and puts it next
+# to bb-probe with NVIDIA's libnvidia-ngx-dlss.so (and -dlssg for Frame Generation, when the SDK
+# has it). Without them DLSS is reported unavailable and FSR is used.
+if [[ -n ${DLSS_SDK_ROOT:-} ]]; then
+    cmake -S gpu/dlss_bridge -B out/dlss-bridge -G Ninja -DCMAKE_BUILD_TYPE=Release \
+        -DDLSS_SDK_ROOT="$DLSS_SDK_ROOT" >/dev/null
+    ninja -C out/dlss-bridge >/dev/null
+    rm -f out/libnvidia-ngx-dlss.so.* out/libnvidia-ngx-dlssg.so.*
+    cp out/dlss-bridge/libbbport_dlss.so "$DLSS_SDK_ROOT"/lib/Linux_x86_64/rel/libnvidia-ngx-dlss.so.* out/
+    cp "$DLSS_SDK_ROOT"/lib/Linux_x86_64/rel/libnvidia-ngx-dlssg.so.* out/ 2>/dev/null || true
+    cp "$DLSS_SDK_ROOT/LICENSE.txt" out/NVIDIA-DLSS-LICENSE.txt
+    echo "DLSS bridge: out/libbbport_dlss.so ($(cd out && ls libnvidia-ngx-dlss*.so.* | tr '\n' ' '))"
+fi

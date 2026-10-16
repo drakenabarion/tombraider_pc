@@ -75,7 +75,8 @@ def entry(name, exe, start_dir, icon, options=''):
 
 
 def add_shortcut(vdf_path, name, exe, start_dir, icon, options=''):
-    """Adds the shortcut to one shortcuts.vdf, or updates the entry that starts the same exe.
+    """Adds the shortcut to one shortcuts.vdf, or updates the entry that starts the same exe with
+    the same launch options or name (one exe can start several games: --play u1, --play u2, ...).
     Returns 'added' or 'updated'. A copy of the old file is kept as shortcuts.vdf.bak."""
     vdf_path = Path(vdf_path)
     data = vdf_path.read_bytes() if vdf_path.exists() else b''
@@ -88,7 +89,9 @@ def add_shortcut(vdf_path, name, exe, start_dir, icon, options=''):
     target = f'"{exe}"'.lower()
     for index, (kind, key, value) in enumerate(shortcuts):
         fields = {k.lower(): v for _t, k, v in value} if kind == MAP else {}
-        if str(fields.get('exe', '')).lower() == target:
+        if str(fields.get('exe', '')).lower() == target and (
+                str(fields.get('launchoptions', '')).strip() == options.strip() or
+                str(fields.get('appname', '')) == name):
             # Keep what Steam or the player added (play time, tags).
             kept = {k.lower() for k in ('LastPlayTime', 'tags')}
             old = {k.lower(): (t, k, v) for t, k, v in value}
@@ -107,7 +110,15 @@ def add_shortcut(vdf_path, name, exe, start_dir, icon, options=''):
 
 
 def steam_folder():
-    """Steam's install folder from the registry, or None."""
+    """Steam's install folder (Windows: the registry; Linux: the usual places, Flatpak included),
+    or None."""
+    if os.name != 'nt':
+        home = Path.home()
+        for path in (home / '.local/share/Steam', home / '.steam/steam', home / '.steam/root',
+                     home / '.var/app/com.valvesoftware.Steam/.local/share/Steam'):
+            if (path / 'userdata').is_dir():
+                return path.resolve()
+        return None
     try:
         import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Software\Valve\Steam') as key:
@@ -126,9 +137,33 @@ def user_configs(steam):
 
 def steam_running():
     import subprocess
+    if os.name != 'nt':
+        # The client process is "steam" (Flatpak included); steamwebhelper alone is not the client.
+        result = subprocess.run(['pgrep', '-x', 'steam'], capture_output=True)
+        return result.returncode == 0
     result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq steam.exe', '/NH'], capture_output=True,
                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     return b'steam.exe' in result.stdout.lower()
+
+
+def shutdown_steam(steam):
+    """Asks the Steam client to exit (it writes shortcuts.vdf on exit, so it must be closed first)."""
+    import subprocess
+    if os.name == 'nt':
+        subprocess.Popen([str(Path(steam) / 'steam.exe'), '-shutdown'],
+                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    else:
+        subprocess.Popen(['steam', '-shutdown'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+
+
+def start_steam(url='steam://open/games'):
+    import subprocess
+    if os.name == 'nt':
+        os.startfile(url)
+    else:
+        subprocess.Popen(['xdg-open', url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
 
 
 if __name__ == '__main__':  # self-test on a temporary file
@@ -138,6 +173,9 @@ if __name__ == '__main__':  # self-test on a temporary file
         print(add_shortcut(vdf, 'Bloodborne', r'C:\Games\bb\Play Bloodborne.exe', r'C:\Games\bb', 'x.exe'))
         print(add_shortcut(vdf, 'Other', r'C:\Other\o.exe', r'C:\Other', ''))
         print(add_shortcut(vdf, 'Bloodborne', r'C:\Games\bb\Play Bloodborne.exe', r'C:\Games\bb', 'y.exe'))
+        print(add_shortcut(vdf, 'U2', '/g/U.AppImage', '/g', '', '--play u2'))
+        print(add_shortcut(vdf, 'U3', '/g/U.AppImage', '/g', '', '--play u3'))
+        print(add_shortcut(vdf, 'U2', '/g/U.AppImage', '/g', '', '--play u2'))
         root = parse(vdf.read_bytes())[0]
         print([[f for f in e[2] if f[1] in ('AppName', 'icon', 'appid')] for e in root[0][2]])
         assert dump(root) + bytes([END]) == vdf.read_bytes()

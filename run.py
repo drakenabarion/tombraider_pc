@@ -27,6 +27,15 @@ def fail(message):
 
 
 def wait_for(pid):
+    if os.name != 'nt':
+        import time
+        for _ in range(300):
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                return
+            time.sleep(0.1)
+        return
     kernel32 = ctypes.windll.kernel32
     SYNCHRONIZE = 0x00100000
     handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
@@ -37,6 +46,8 @@ def wait_for(pid):
 
 def no_console():
     """Started without a console (the launcher): console programs must not open their own."""
+    if os.name != 'nt':
+        return 0
     return 0 if ctypes.windll.kernel32.GetConsoleWindow() else subprocess.CREATE_NO_WINDOW
 
 
@@ -99,7 +110,7 @@ def main():
     if not env.get('BB_FSR411_DIR') and not (PORT / 'fsr4_411').is_dir() and (data / 'fsr4_411').is_dir():
         env['BB_FSR411_DIR'] = str(data / 'fsr4_411')
 
-    probe = Path(env['BB_PROBE']) if env.get('BB_PROBE') else find_executable('bb-probe.exe')
+    probe = Path(env['BB_PROBE']) if env.get('BB_PROBE') else find_executable('bb-probe.exe' if os.name == 'nt' else 'bb-probe')
     if not probe or not probe.is_file():
         fail('bb-probe.exe not found: build it with build.sh (MSYS2 CLANG64) or use a packaged build.')
     # Development builds run from the MSYS2 tree: its CLANG64 DLLs (SDL3, FFmpeg, ...).
@@ -122,6 +133,12 @@ def main():
     loadexec = out_root / 'loadexec.txt'
     env['BB_LOADEXEC_FILE'] = str(loadexec)
     guest_argv = None
+    # BB_GUEST_ARGS: arguments for the first executable, as sceSystemServiceLoadExec would pass
+    # them (tests: U2 with the collection menu's "eboot.bin ispartofuccollection").
+    if env.get('BB_GUEST_ARGS'):
+        guest_argv = out_root / 'guest-argv.txt'
+        out_root.mkdir(parents=True, exist_ok=True)
+        guest_argv.write_text('\n'.join([f'/app0/{exe}', *env['BB_GUEST_ARGS'].split()]) + '\n', encoding='utf-8')
     while True:
         if not (game / exe).is_file():
             fail(f'No {exe} in {game}.')

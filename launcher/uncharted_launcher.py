@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import signal
 import re
 import runpy
 import shutil
@@ -27,12 +28,16 @@ import urllib.request
 import webbrowser
 import zipfile
 
+WINDOWS = sys.platform == 'win32'
+# Windows without a cursor of their own show the X root window's, which XWayland leaves blank.
+ARROW = '' if WINDOWS else 'left_ptr'
 FROZEN = getattr(sys, 'frozen', False)
 PORT_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 DATA_DIR = Path(os.environ.get('BB_DATA_DIR', PORT_DIR))
-CONFIG_DIR = Path(os.environ.get('APPDATA', Path.home())) / 'uncharted-launcher'
+CONFIG_DIR = (Path(os.environ.get('APPDATA', Path.home())) if WINDOWS else
+              Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')) / 'uncharted-launcher'
 CONFIG_FILE = CONFIG_DIR / 'settings.json'
 NAME = 'Uncharted'
 AUTHOR = 'SuperMedo'
@@ -45,6 +50,8 @@ UPDATE_DIR = Path(tempfile.gettempdir()) / 'uncharted-update'
 USER_FILES = ('user', 'out', 'art', 'bbport.ini', 'input.ini', 'last_run.log')
 MAX_LOG_LINES = 6000
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+# The game and everything it starts form one process group, ended together (GameJob).
+NEW_GROUP = {} if WINDOWS else {'start_new_session': True}
 
 GAMES = [
     ('u1', "Drake's Fortune", 'Uncharted 1 · 2007', 'eboot.bin'),
@@ -151,6 +158,8 @@ def _(text):
 
 def attach_stdio():
     """A windowed executable starts without sys.stdout; inherited pipes or a console still exist."""
+    if not WINDOWS:
+        return
     import msvcrt
     for name, std in (('stdout', -11), ('stderr', -12)):
         if getattr(sys, name) is not None:
@@ -241,6 +250,8 @@ def game_info(folder):
 
 
 def display_refresh_rate():
+    if not WINDOWS:
+        return None
     """Refresh rate of the main display in Hz, or None."""
     try:
         class DevMode(ctypes.Structure):
@@ -363,7 +374,7 @@ class Launcher:
         self.show('play')
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(100, self.drain_output)
-        if self.app.get('check_updates', True):
+        if WINDOWS and self.app.get('check_updates', True):
             threading.Thread(target=self.check_update, daemon=True).start()
 
     def px(self, size):
@@ -371,7 +382,12 @@ class Launcher:
 
     def set_icon(self):
         try:
-            self.root.iconbitmap(default=str(PORT_DIR / 'launcher' / 'uncharted.ico'))
+            if WINDOWS:
+                self.root.iconbitmap(default=str(PORT_DIR / 'launcher' / 'uncharted.ico'))
+            else:
+                # X11 takes a PNG; the .ico is Windows-only.
+                self._icon = self.tk.PhotoImage(file=str(PORT_DIR / 'launcher' / 'uncharted.png'))
+                self.root.iconphoto(True, self._icon)
         except self.tk.TclError:
             pass
 
@@ -402,6 +418,18 @@ class Launcher:
         self.font_card = ('Segoe UI Semibold', 9)
         import tkinter.font as tkfont
         families = set(tkfont.families(self.root))
+        if not WINDOWS:
+            pick = lambda names: next((n for n in names if n in families), names[-1])
+            ui = pick(('Segoe UI', 'Noto Sans', 'DejaVu Sans'))
+            if 'Cinzel' not in families:
+                self.brand_family = pick(('Georgia', 'Noto Serif', 'DejaVu Serif'))
+                self.font_brand_xl = (self.brand_family, 24, 'bold')
+                self.font_brand_lg = (self.brand_family, 18, 'bold')
+                self.font_brand_md = (self.brand_family, 13, 'bold')
+                self.font_brand_sm = (self.brand_family, 10)
+            self.font_ui, self.font_ui_sm = (ui, 10), (ui, 9)
+            self.font_ui_md = self.font_button = (ui, 10, 'bold')
+            self.font_play, self.font_title, self.font_card = (ui, 13, 'bold'), (ui, 22, 'bold'), (ui, 9, 'bold')
         icons = next((f for f in ('Segoe Fluent Icons', 'Segoe MDL2 Assets') if f in families), None)
         self.font_icon = (icons, 13) if icons else None
         self.font_icon_sm = (icons, 11) if icons else None
@@ -567,7 +595,7 @@ class Launcher:
         self.ttk.Entry(holder, textvariable=var, width=54).pack(side='left')
 
         def browse():
-            chosen = self.filedialog.askdirectory(title=prompt, initialdir=var.get() or str(PORT_DIR))
+            chosen = self.ask_directory(prompt, var.get() or str(PORT_DIR))
             if chosen:
                 var.set(str(Path(chosen)))
         self.pill(holder, _('Browse…'), browse, padding=(14, 6)).pack(side='left', padx=(8, 0))
@@ -625,7 +653,7 @@ class Launcher:
             inside = (canvas.winfo_rootx() <= x < canvas.winfo_rootx() + canvas.winfo_width() and
                       canvas.winfo_rooty() <= y < canvas.winfo_rooty() + canvas.winfo_height())
             if inside and bar.winfo_ismapped():
-                canvas.yview_scroll(-1 * (event.delta // 120), 'units')
+                canvas.yview_scroll(wheel_steps(event), 'units')
         return 'break'
 
     # ---- layout ------------------------------------------------------------------------------
@@ -703,6 +731,10 @@ class Launcher:
         self.pages, self.scrollers, self.page_cards = {}, {}, {}
         self.root.bind_all('<MouseWheel>', self.on_wheel)
         self.root.bind_class('TCombobox', '<MouseWheel>', self.on_wheel)
+        if not WINDOWS:  # X11 (Tk 8.6): the wheel arrives as buttons 4 and 5
+            for button in ('<Button-4>', '<Button-5>'):
+                self.root.bind_all(button, self.on_wheel)
+                self.root.bind_class('TCombobox', button, self.on_wheel)
         self.build_play()
         self.build_game()
         self.build_display()
@@ -1131,7 +1163,7 @@ class Launcher:
         return 'break'
 
     def captured_wheel(self, event):
-        self.set_key(*self.capturing, 'Wheel Up' if event.delta > 0 else 'Wheel Down')
+        self.set_key(*self.capturing, 'Wheel Up' if wheel_steps(event) < 0 else 'Wheel Down')
         return 'break'
 
     def reset_keys(self):
@@ -1238,7 +1270,8 @@ class Launcher:
         try:
             self.process = subprocess.Popen(run_command(), cwd=PORT_DIR, env=game_environment(self.app),
                                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                            stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+                                            stderr=subprocess.STDOUT, creationflags=NO_WINDOW,
+                                            **NEW_GROUP)
         except OSError as error:
             self.append(_('Could not start: {}').format(error) + '\n')
             self.process = None
@@ -1332,17 +1365,38 @@ class Launcher:
         self.root.clipboard_clear()
         self.root.clipboard_append(self.log.get('1.0', 'end'))
 
+    def ask_directory(self, prompt, initial):
+        """A folder picker. Linux: the desktop's own dialog (KDE, then GTK); Tk's dialog does not
+        follow the launcher's dark theme there and shows white text on white."""
+        if not WINDOWS:
+            for command in (['kdialog', '--title', prompt, '--getexistingdirectory', initial],
+                            ['zenity', '--file-selection', '--directory', '--title', prompt,
+                             f'--filename={initial.rstrip("/")}/']):
+                if shutil.which(command[0]):
+                    result = subprocess.run(command, capture_output=True, text=True)
+                    return result.stdout.strip() if result.returncode == 0 else ''
+        return self.filedialog.askdirectory(title=prompt, initialdir=initial)
+
     def open_path(self, path, key=None):
         if key == 'user_dir' and not path:
             path = DATA_DIR / 'user'
         path = Path(path or DATA_DIR)
         if not path.exists():
             path.mkdir(parents=True, exist_ok=True)
-        os.startfile(str(path))
+        if WINDOWS:
+            os.startfile(str(path))
+        else:
+            subprocess.Popen(['xdg-open', str(path)], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     # ---- updates -------------------------------------------------------------------------------
     def check_update(self, manual=False):
         """Helper thread: asks GitHub for the newest release and offers it when it is newer."""
+        if not WINDOWS:  # releases are Windows packages; a Linux build updates with git pull
+            if manual:
+                self.ui_calls.put(lambda: self.messagebox.showinfo(
+                    NAME, _('Updates are Windows packages. On Linux, update the source with git pull and rebuild.')))
+            return
         try:
             version, url, page = latest_release()
         except (OSError, ValueError, KeyError) as failure:
@@ -1436,6 +1490,9 @@ class Launcher:
 
     def shortcut(self):
         """Uncharted.lnk on the desktop."""
+        if not WINDOWS:
+            self.messagebox.showinfo(NAME, _('Desktop shortcuts are Windows-only in this launcher.'))
+            return
         if FROZEN:
             target, arguments, icon = sys.executable, '', f'{sys.executable},0'
         else:
@@ -1454,25 +1511,34 @@ class Launcher:
             self.messagebox.showerror(NAME, result.stderr.decode(errors='replace')[:400])
 
     def add_to_steam(self):
-        """The collection in the Steam library (a non-Steam game that starts Uncharted.exe --play)."""
+        """Each game in the Steam library: non-Steam shortcuts that start this launcher with
+        --play u1, u2 or u3 (no launcher window; the settings saved here apply)."""
         import bbport_steam
         steam = bbport_steam.steam_folder()
         configs = bbport_steam.user_configs(steam) if steam else []
         if not configs:
             self.messagebox.showerror(NAME, _('Steam was not found on this PC (or nobody has signed in to it yet).'))
             return
-        if FROZEN:
-            exe, options = Path(sys.executable), '--play'
-        else:
+        appimage = os.environ.get('APPIMAGE')
+        if appimage:
+            # Inside the AppImage the launcher runs from a mount that changes every start: the
+            # shortcut starts the AppImage file itself.
+            exe, base, start_dir = Path(appimage), '--play', Path(appimage).parent
+        elif FROZEN:
+            exe, base, start_dir = Path(sys.executable), '--play', PORT_DIR
+        elif WINDOWS:
             pythonw = Path(sys.executable).with_name('pythonw.exe')
-            exe, options = (pythonw if pythonw.exists() else Path(sys.executable)), f'"{Path(__file__).resolve()}" --play'
+            exe = pythonw if pythonw.exists() else Path(sys.executable)
+            base, start_dir = f'"{Path(__file__).resolve()}" --play', PORT_DIR
+        else:
+            exe, base, start_dir = Path(sys.executable), f'"{Path(__file__).resolve()}" --play', PORT_DIR
         self.collect()
         restart = False
         if bbport_steam.steam_running():
-            if not self.messagebox.askyesno(NAME, _('Steam has to close while the game is added; it starts '
+            if not self.messagebox.askyesno(NAME, _('Steam has to close while the games are added; it starts '
                                                     'again afterwards. Close Steam now?')):
                 return
-            subprocess.Popen([str(steam / 'steam.exe'), '-shutdown'], creationflags=NO_WINDOW)
+            bbport_steam.shutdown_steam(steam)
             for _i in range(60):
                 time.sleep(0.5)
                 if not bbport_steam.steam_running():
@@ -1482,24 +1548,42 @@ class Launcher:
                 return
             time.sleep(1)
             restart = True
-        title = 'Uncharted: The Nathan Drake Collection'
+        titles = {'u1': "Uncharted: Drake's Fortune", 'u2': 'Uncharted 2: Among Thieves',
+                  'u3': "Uncharted 3: Drake's Deception"}
+        info = game_info(self.app['game_dir']) or {'games': list(titles)}
+        icon = PORT_DIR / 'launcher' / ('uncharted.ico' if WINDOWS else 'uncharted.png')
+        # Steam starts games with a PATH that lacks fusermount, which the AppImage needs to mount
+        # itself ("Cannot mount AppImage"): name it for the AppImage runtime (FUSERMOUNT_PROG).
+        prefix = ''
+        if appimage and not WINDOWS:
+            fusermount = shutil.which('fusermount3') or shutil.which('fusermount')
+            if fusermount:
+                prefix = f'FUSERMOUNT_PROG={fusermount} %command% '
+        added = []
         try:
             for config in configs:
-                bbport_steam.add_shortcut(config / 'shortcuts.vdf', title, str(exe), str(PORT_DIR), str(exe), options)
-                # Library pictures (cover, header, hero) from the box art of the player's game folder.
-                try:
-                    import uncharted_art
-                    uncharted_art.steam_artwork(self.app['game_dir'], config / 'grid',
-                                                bbport_steam.shortcut_id(f'"{exe}"', title))
-                except Exception:  # pictures are a nicety: the shortcut works without them
-                    pass
+                for key, title in titles.items():
+                    if key not in info['games']:
+                        continue
+                    bbport_steam.add_shortcut(config / 'shortcuts.vdf', title, str(exe), str(start_dir),
+                                              str(icon if icon.is_file() else exe), prefix + f'{base} {key}')
+                    if title not in added:
+                        added.append(title)
+                    # Library pictures (cover, header, hero) from the game's poster.
+                    try:
+                        import uncharted_art
+                        uncharted_art.steam_artwork(self.app['game_dir'], config / 'grid',
+                                                    bbport_steam.shortcut_id(f'"{exe}"', title), key)
+                    except Exception:  # pictures are a nicety: the shortcut works without them
+                        pass
         except (OSError, ValueError) as error:
-            self.messagebox.showerror(NAME, _('Could not add the game to Steam: {}').format(error))
+            self.messagebox.showerror(NAME, _('Could not add the games to Steam: {}').format(error))
             return
         if restart:
-            os.startfile('steam://open/games')
-        self.messagebox.showinfo(NAME, _('The collection is in your Steam library. It starts with the settings '
-                                         'saved in this launcher.'))
+            bbport_steam.start_steam()
+        note = '' if WINDOWS else '\n\n' + _('In Steam, leave Compatibility (Proton) off for these games.')
+        self.messagebox.showinfo(NAME, _('In your Steam library: {}. Each starts with the settings saved in '
+                                         'this launcher.').format(', '.join(added)) + note)
 
     def close(self):
         try:
@@ -1514,6 +1598,10 @@ class GameJob:
     collection, an in-game restart), so Stop ends all of them."""
 
     def __init__(self, process):
+        if not WINDOWS:
+            self.group = process.pid  # started with start_new_session: its own process group
+            self.handle = None
+            return
         kernel32 = ctypes.windll.kernel32
         kernel32.CreateJobObjectW.restype = ctypes.c_void_p
         self.handle = kernel32.CreateJobObjectW(None, None)
@@ -1521,13 +1609,32 @@ class GameJob:
             kernel32.AssignProcessToJobObject(ctypes.c_void_p(self.handle), ctypes.c_void_p(int(process._handle)))
 
     def terminate(self):
+        if not WINDOWS:
+            self.signal_group(signal.SIGTERM)
+            threading.Timer(3, self.signal_group, args=(signal.SIGKILL,)).start()
+            return
         if self.handle:
             ctypes.windll.kernel32.TerminateJobObject(ctypes.c_void_p(self.handle), 1)
+
+    def signal_group(self, number):
+        try:
+            os.killpg(self.group, number)
+        except (ProcessLookupError, PermissionError):
+            pass
 
     def close(self):
         if self.handle:
             ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(self.handle))
             self.handle = None
+
+
+def wheel_steps(event):
+    """Scroll units for a wheel event: Windows gives a delta, X11 buttons 4 (up) and 5 (down)."""
+    if getattr(event, 'num', None) == 4:
+        return -1
+    if getattr(event, 'num', None) == 5:
+        return 1
+    return -1 * (event.delta // 120)
 
 
 def version_tuple(text):
@@ -1572,16 +1679,16 @@ def install_update(target, wait_pid):
     return 0
 
 
-def play_without_window(settings):
+def play_without_window(settings, start=None):
     """--play: the game with the saved settings (shortcuts, Steam); output to the console when
     there is one and to <saves folder>/last_run.log."""
     attach_stdio()
     log_dir = Path(settings.get('user_dir') or DATA_DIR / 'user')
     log_dir.mkdir(parents=True, exist_ok=True)
     with open(log_dir / 'last_run.log', 'w', encoding='utf-8', buffering=1) as log:
-        process = subprocess.Popen(run_command(), cwd=PORT_DIR, env=game_environment(settings),
+        process = subprocess.Popen(run_command(), cwd=PORT_DIR, env=game_environment(settings, start),
                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                   stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+                                   stderr=subprocess.STDOUT, creationflags=NO_WINDOW, **NEW_GROUP)
         for raw in iter(process.stdout.readline, b''):
             text = raw.decode('utf-8', errors='replace')
             log.write(text)
@@ -1602,14 +1709,22 @@ def main():
         shutil.rmtree(UPDATE_DIR, ignore_errors=True)  # what a finished update left behind
     settings = {**APP_DEFAULTS, **load_json(CONFIG_FILE, {})}
     if '--play' in args and (Path(settings['game_dir'] or '.') / 'eboot.bin').is_file():
-        sys.exit(play_without_window(settings))
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    except (AttributeError, OSError):
-        pass
+        # --play u1|u2|u3 (one Steam shortcut per game); --play alone: the game chosen last.
+        after = args[args.index('--play') + 1:]
+        start = after[0] if after and after[0] in {key for key, *_rest in GAMES} else None
+        sys.exit(play_without_window(settings, start))
+    if WINDOWS:
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except (AttributeError, OSError):
+            pass
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
-    root = tk.Tk()
+    root = tk.Tk() if WINDOWS else tk.Tk(className='uncharted')
+    if not WINDOWS:
+        root.configure(cursor=ARROW)
+        for window in ('Toplevel', 'Dialog', 'TkFDialog', 'TkChooseDir'):
+            root.option_add(f'*{window}.cursor', ARROW)
     Launcher(root, tk, ttk, filedialog, messagebox)
     root.mainloop()
 

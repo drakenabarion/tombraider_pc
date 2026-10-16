@@ -211,6 +211,14 @@ struct DepthBuffer {
     } z_info;
     struct {
         StencilFormat format : 1;
+        u32 : 12;
+        u32 tile_split : 3;
+        u32 : 4;
+        u32 tile_mode_index : 3;
+        u32 : 4;
+        u32 allow_expclear : 1;
+        u32 : 1;
+        u32 tile_stencil_disable : 1;
     } stencil_info;
     u32 z_read_base;
     u32 stencil_read_base;

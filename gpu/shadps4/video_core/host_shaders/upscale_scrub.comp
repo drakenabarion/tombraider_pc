@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// bbport: cleans the scene color before the upscaler reads it: NaN and negative values become 0,
+// infinity the largest half float. The game's own post-processing clamps such pixels away, but
+// FSR's and DLSS's filters and history spread them into a black blot that comes and goes (U1's
+// boat deck plates, whose specular goes negative at some view angles).
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0, rgba16f) uniform image2D scene;
+
+void main() {
+    const ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, imageSize(scene)))) {
+        return;
+    }
+    const vec4 c = imageLoad(scene, pixel);
+    if (!any(isnan(c.rgb)) && !any(isinf(c.rgb)) && !any(lessThan(c.rgb, vec3(0.0)))) {
+        return;
+    }
+    vec3 rgb = mix(c.rgb, vec3(0.0), isnan(c.rgb));
+    rgb = clamp(rgb, vec3(0.0), vec3(65504.0));
+    imageStore(scene, pixel, vec4(rgb, c.a));
+}

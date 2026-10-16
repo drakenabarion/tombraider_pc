@@ -453,6 +453,7 @@ void Scheduler::AllocateWorkerCommandBuffers() {
 
 void Scheduler::SubmitExecution(SubmitInfo& info) {
     std::scoped_lock lk{submit_mutex};
+#ifdef _WIN32 // bbport debug (Windows API only)
     // bbport: BB_SUBMIT_THREADS=1 names each thread that submits through this scheduler (once).
     static const bool submit_threads = std::getenv("BB_SUBMIT_THREADS") != nullptr;
     if (submit_threads) {
@@ -472,9 +473,11 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
                         static_cast<const void*>(this), tid, name, on_submit ? " (draw scheduler)" : "");
         }
     }
+#endif
     // bbport: the GPU command thread must not submit while the draw recording thread still has
     // work in this command buffer (its sparse binds would miss this submission). Reported once
     // per caller with a stack (module offsets for llvm-symbolizer).
+#ifdef _WIN32 // bbport debug (Windows API only)
     if (on_submit && g_draw_pipe_busy && g_draw_pipe_busy()) {
         static std::mutex report_mutex;
         static std::vector<void*> reported;
@@ -492,6 +495,7 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
             std::printf("\n");
         }
     }
+#endif
     const u64 signal_value = work_semaphore.NextTick();
 
 #if TRACY_GPU_ENABLED

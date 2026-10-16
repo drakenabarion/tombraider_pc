@@ -396,20 +396,25 @@ def _framed(art, size):
     return background
 
 
-def steam_artwork(game_dir, grid_dir, appid):
+def steam_artwork(game_dir, grid_dir, appid, game=None):
     """Steam library pictures for the shortcut with this id: cover (p), header, hero.
-    Returns the files written; nothing when the game folder has no art."""
-    art = cover(game_dir)
+    game ('u1', 'u2', 'u3'): that game's poster (launcher covers) instead of the collection's box
+    art, for the per-game shortcuts. Returns the files written; nothing when there is no art."""
+    poster = load_art(POSTERS[game]) if game in POSTERS else None
+    art = poster or cover(game_dir)
     if art is None:
         return []
     grid_dir = Path(grid_dir)
     grid_dir.mkdir(parents=True, exist_ok=True)
     pictures = {f'{appid}p.png': _framed(art, (600, 900)), f'{appid}.png': _framed(art, (920, 430))}
-    try:
-        with Image.open(Path(game_dir) / 'sce_sys' / 'pic1.png') as wide:
-            pictures[f'{appid}_hero.png'] = _fill(wide.convert('RGB'), (1920, 620))
-    except OSError:
-        pictures[f'{appid}_hero.png'] = _framed(art, (1920, 620))
+    if poster is not None:
+        pictures[f'{appid}_hero.png'] = _fill(poster, (1920, 620))
+    else:
+        try:
+            with Image.open(Path(game_dir) / 'sce_sys' / 'pic1.png') as wide:
+                pictures[f'{appid}_hero.png'] = _fill(wide.convert('RGB'), (1920, 620))
+        except OSError:
+            pictures[f'{appid}_hero.png'] = _framed(art, (1920, 620))
     written = []
     for name, picture in pictures.items():
         picture.save(grid_dir / name)

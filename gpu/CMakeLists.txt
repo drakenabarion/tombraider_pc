@@ -160,7 +160,7 @@ add_library(bbgpu ${BBGPU_KIND} ${VIDEO_CORE} ${RECOMPILER} ${COMMON} ${SHIM_SOU
 add_dependencies(bbgpu host_shaders)
 # bbport co-op: PS4 network and PSN libraries with the shadNet client, from shadp2p
 # (github.com/Wozzardman/shadp2p, GPL-2.0), for private Bloodborne co-op servers.
-find_package(Protobuf CONFIG REQUIRED)
+find_package(Protobuf REQUIRED)
 set(SHADNET_PROTO_OUT "${CMAKE_CURRENT_BINARY_DIR}/shadnet_proto_gen")
 file(MAKE_DIRECTORY "${SHADNET_PROTO_OUT}")
 add_custom_command(
@@ -184,6 +184,12 @@ find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
 target_compile_definitions(bbnet PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT CPPHTTPLIB_ZLIB_SUPPORT)
 target_link_libraries(bbnet PRIVATE OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB)
+if (NOT WIN32)
+    find_path(MINIUPNPC_INCLUDE upnperrors.h PATH_SUFFIXES miniupnpc REQUIRED)
+    find_library(MINIUPNPC_LIBRARY NAMES miniupnpc REQUIRED)
+    target_include_directories(bbnet PRIVATE "${MINIUPNPC_INCLUDE}")
+    target_link_libraries(bbnet PRIVATE "${MINIUPNPC_LIBRARY}")
+endif()
 if (WIN32)
     target_sources(bbnet PRIVATE third_party/wepoll/wepoll.c)
     target_include_directories(bbnet PRIVATE third_party/wepoll)

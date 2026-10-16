@@ -1564,7 +1564,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     // bbport: jitter geometry drawn with the scene depth, not full-screen passes (a shifted
     // full-screen quad leaves an edge column unwritten).
     draw_jitter = {};
-    if (upscaler->Enabled() && db_desc.first && db_desc.first == camera_motion->Depth() &&
+    if (upscaler->Enabled() && JitterDepth(db_desc.first) &&
         (regs.num_indices > 6 || regs.num_instances.NumInstances() > 1)) {
         draw_jitter = upscaler->Jitter();
     }
@@ -1728,7 +1728,7 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     push_data.yoffset *= target_scale[1];
     pipeline->BindResources(set_writes, push_data);
     draw_jitter = {};
-    if (upscaler->Enabled() && db_desc.first && db_desc.first == camera_motion->Depth()) {
+    if (upscaler->Enabled() && JitterDepth(db_desc.first)) {
         draw_jitter = upscaler->Jitter();
     }
     UpdateDynamicState(pipeline, is_indexed);
@@ -3715,11 +3715,16 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         auto& image = texture_cache.GetImage(image_id);
 
         const auto slice = image_view.info.range.base.layer;
+        const bool is_meta_cleared = texture_cache.IsMetaCleared(htile_address, slice);
         const bool is_depth_clear =
             (regs.depth_render_control.depth_clear_enable && regs.depth_control.depth_enable &&
              regs.depth_control.depth_write_enable) ||
-            texture_cache.IsMetaCleared(htile_address, slice);
-        const bool is_stencil_clear = regs.depth_render_control.stencil_clear_enable;
+            is_meta_cleared;
+        // A fast clear through HTILE clears the stencil too, unless the stencil isn't tiled.
+        const bool is_stencil_clear =
+            regs.depth_render_control.stencil_clear_enable ||
+            (is_meta_cleared && regs.depth_buffer.z_info.tile_surface_enable &&
+             !regs.depth_buffer.stencil_info.tile_stencil_disable);
         texture_cache.TouchMeta(htile_address, slice, false);
         ASSERT(desc.view_info.range.extent.levels == 1 && !image.binding.needs_rebind);
 
@@ -4284,6 +4289,34 @@ void Rasterizer::UpdateViewportScissorState() const {
     auto& dynamic_state = scheduler.GetDynamicState();
     dynamic_state.SetViewports(viewports);
     dynamic_state.SetScissors(scissors);
+}
+
+// bbport: draws jittered with the scene: those on the scene depth, and (Uncharted) those on a
+// second full-size depth buffer the game fills from the scene depth for a later pass (U1: 17
+// draws after the opaque scene). Unjittered, that pass lands a fraction of a pixel off the
+// jittered scene and fights it in the depth test: the black blot on U1's boat deck plates.
+// BB_JITTER_SCENE_SIZED=0: the scene depth only (as before).
+bool Rasterizer::JitterDepth(VideoCore::ImageId depth) {
+    const auto scene = camera_motion->Depth();
+    if (!depth || !scene) {
+        return false;
+    }
+    if (depth == scene) {
+        return true;
+    }
+    static const bool scene_sized = [] {
+        const char* env = std::getenv("BB_JITTER_SCENE_SIZED");
+        return !(env && env[0] == '0');
+    }();
+    if (!scene_sized) {
+        return false;
+    }
+    // TryGetImage: a lookup only (GetImage also marks the image used).
+    const auto* a = texture_cache.TryGetImage(depth, 0);
+    const auto* b = texture_cache.TryGetImage(scene, 0);
+    return a && b && a->info.size.width == b->info.size.width &&
+           a->info.size.height == b->info.size.height &&
+           a->info.pixel_format == b->info.pixel_format;
 }
 
 void Rasterizer::UpdateDepthStencilState() const {
