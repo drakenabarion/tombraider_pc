@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Builds dist/Uncharted-x86_64.AppImage from the current Linux build (build first: out/bb-probe,
+# Builds dist/Virtual-On-x86_64.AppImage from the current Linux build (build first: out/bb-probe,
 # out/gpu/libbbgpu.so). No Nix: the launcher is frozen with PyInstaller, and the libraries the
 # game needs are copied from this system (graphics driver, glibc, audio and windowing stay the
 # host's). Laid out like the GOW III AppImage.
 # Needs: python3 with tkinter, patchelf, network for pip and appimagetool on the first run.
-# Data (prepared executables, bbport.ini, input.ini): ~/.local/share/uncharted (BB_DATA_DIR).
+# Data (prepared executables, saves, bbport.ini, input.ini): ~/.local/share/virtualon (BB_DATA_DIR).
 set -euo pipefail
 cd -- "$(dirname -- "$0")/.."
 root=$PWD
@@ -20,22 +20,21 @@ py=out/pyenv-linux/bin/python
 "$py" -m pip install -q --disable-pip-version-check pyinstaller pillow
 hidden=()
 for module in argparse base64 collections hashlib json re shutil struct tempfile zlib \
-              uncharted_art uncharted_fonts uncharted_widgets bbport_steam PIL.ImageTk PIL._tkinter_finder; do
+              virtualon_art uncharted_widgets bbport_steam PIL.ImageTk PIL._tkinter_finder; do
     hidden+=(--hidden-import "$module")
 done
 "$py" -m PyInstaller --noconfirm --clean --log-level WARN --windowed \
-    --name uncharted-launcher --distpath out/pyi-dist-linux --workpath out/pyi-work-linux \
+    --name virtualon-launcher --distpath out/pyi-dist-linux --workpath out/pyi-work-linux \
     --specpath out/pyi-work-linux --paths "$root/scripts" --paths "$root/launcher" \
-    --add-data "$root/launcher/fonts:fonts" --add-data "$root/launcher/covers:covers" \
-    "${hidden[@]}" launcher/uncharted_launcher.py
+    "${hidden[@]}" launcher/virtualon_launcher.py
 
 # 2. AppDir.
 app=out/AppDir
 rm -rf -- "$app"
-share=$app/usr/share/uncharted
+share=$app/usr/share/virtualon
 lib=$app/usr/lib
 mkdir -p "$share/bin" "$share/scripts" "$share/launcher" "$lib"
-cp -r out/pyi-dist-linux/uncharted-launcher/. "$share/"
+cp -r out/pyi-dist-linux/virtualon-launcher/. "$share/"
 cp out/bb-probe "$share/bin/"
 cp out/gpu/libbbgpu.so "$lib/"
 # DLSS (a build with DLSS_SDK_ROOT): the bridge and NVIDIA's libraries beside bb-probe, where the
@@ -49,16 +48,8 @@ cp scripts/prepare.py scripts/link_modules.py scripts/link_libc.py scripts/conte
 cp run.py LICENSE "$share/"
 [[ -d patches ]] && cp -r patches "$share/"
 [[ -d fsr4_shaders ]] && cp -r fsr4_shaders "$share/"
-"$py" - "$root/launcher/uncharted.ico" "$share/launcher/uncharted.png" <<'PY'
-import sys
-from PIL import Image
-im = Image.open(sys.argv[1])
-sizes = sorted(im.info.get('sizes', [im.size]), key=lambda s: s[0])
-if sizes:
-    im.size = sizes[-1]
-im.convert('RGBA').resize((256, 256)).save(sys.argv[2])
-PY
-cp "$share/launcher/uncharted.png" "$app/uncharted.png"
+cp launcher/virtualon.png launcher/virtualon.ico "$share/launcher/"
+cp launcher/virtualon.png "$app/virtualon.png"
 
 # 3. Libraries: everything bb-probe and libbbgpu.so load, minus what must come from the host.
 # Exact names (libc must not catch libcrypto) and whole families (libX*, libxcb*, libGL*, ...).
@@ -82,26 +73,27 @@ done
 # 4. Entry point and desktop file.
 cat > "$app/AppRun" <<'RUN'
 #!/usr/bin/env bash
-# AppImage entry point: the frozen Tk launcher. Usage: Uncharted-x86_64.AppImage [--play]
+# AppImage entry point: the frozen Tk launcher.
+# Usage: Virtual-On-x86_64.AppImage [--play menu|omg|ot|force]
 set -euo pipefail
 here=$(dirname -- "$(readlink -f -- "$0")")
-share=$here/usr/share/uncharted
-export BB_DATA_DIR=${BB_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/uncharted}
+share=$here/usr/share/virtualon
+export BB_DATA_DIR=${BB_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/virtualon}
 mkdir -p "$BB_DATA_DIR"
 cd -- "$share"
-exec "$share/uncharted-launcher" "$@"
+exec "$share/virtualon-launcher" "$@"
 RUN
 chmod +x "$app/AppRun"
-cat > "$app/uncharted.desktop" <<'DESK'
+cat > "$app/virtualon.desktop" <<'DESK'
 [Desktop Entry]
 Type=Application
-Name=Uncharted: The Nathan Drake Collection
-Comment=PC port of the Uncharted collection (bring your own game dump)
+Name=Virtual-On Masterpiece
+Comment=Native Linux port of Cyber Troopers Virtual-On Masterpiece 1995~2001 (bring your own game dump)
 Exec=AppRun
-Icon=uncharted
+Icon=virtualon
 Categories=Game;
 Terminal=false
-StartupWMClass=uncharted
+StartupWMClass=virtualon
 DESK
 
 # 5. Pack.
@@ -111,6 +103,6 @@ if [[ ! -x $tool ]]; then
     chmod +x "$tool"
 fi
 mkdir -p dist
-ARCH=x86_64 "$tool" --no-appstream "$app" dist/Uncharted-x86_64.AppImage
-ls -lh dist/Uncharted-x86_64.AppImage
+ARCH=x86_64 "$tool" --no-appstream "$app" dist/Virtual-On-x86_64.AppImage
+ls -lh dist/Virtual-On-x86_64.AppImage
 echo "Bundled libraries:"; ls "$lib"

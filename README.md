@@ -44,16 +44,29 @@ bash build.sh
 builds `out/bb-probe` and `out/gpu/libbbgpu.so` (needs clang, cmake, ninja, pkg-config with
 Vulkan and SDL3, FFmpeg, protobuf, OpenSSL, zlib and miniupnpc). With `DLSS_SDK_ROOT` set to a
 checkout of the [NVIDIA DLSS SDK](https://github.com/NVIDIA/DLSS), it also builds the optional
-DLSS bridge. `packaging/appimage-linux.sh` packs an AppImage.
+DLSS bridge.
 
 ## Running
 
+The launcher (needs python3 with tkinter and Pillow):
+
 ```
-BB_GAME_DIR=/path/to/CUSA16156 BB_EXE=omg python3 run.py
+python3 launcher/virtualon_launcher.py
 ```
 
-`BB_EXE` picks the game: `omg` (Virtual-On), `ot` (Oratorio Tangram) or `force` (Force).
-Saves and caches go to `user/` unless `BB_USER_DIR` says otherwise.
+Set the game folder on the Game page, pick the collection menu or one of the games, and press
+Play. **Add to Steam** adds each of the four as a non-Steam shortcut (leave Proton off), and
+**Desktop shortcut** puts the launcher in the applications menu. `packaging/appimage-linux.sh`
+packs the launcher and the port into `dist/Virtual-On-x86_64.AppImage`.
+
+Without the launcher:
+
+```
+BB_GAME_DIR=/path/to/CUSA16156 BB_EXE=menu python3 run.py
+```
+
+`BB_EXE` picks what starts: `menu` (the collection menu), `omg` (Virtual-On), `ot` (Oratorio
+Tangram) or `force` (Force). Saves and caches go to `user/` unless `BB_USER_DIR` says otherwise.
 
 ## Changes from the ports it is built on
 
@@ -78,6 +91,9 @@ Saves and caches go to `user/` unless `BB_USER_DIR` says otherwise.
   boot. Shorter waits are left alone (`BB_MUTEX_HANDOFF=0` turns the hand-over off).
 - Thread dumps (`pkill -ALRM bb-probe`) also list guest code addresses found on each stack.
 - The upscaler's jitter also applies to passes drawn on a second scene-sized depth buffer.
+- A launcher of its own (`launcher/virtualon_launcher.py`, based on the Uncharted port's) with
+  original artwork: painted posters, or your own pictures in `launcher/art` (`menu.jpg`, `omg.jpg`,
+  `ot.jpg`, `force.jpg`).
 - `tools/toggle_bisect.py` finds which renderer optimization breaks a game's picture while it
   runs (with `BB_TOGGLE_FILE`).
 
