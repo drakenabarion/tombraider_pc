@@ -73,8 +73,10 @@ Saves and caches go to `user/` unless `BB_USER_DIR` says otherwise.
 - Video playback: the clock runs on real time until the game asks for audio, and audio the game
   never takes is dropped once expired (the SEGA logo froze otherwise). Two threads joining the
   same player thread at the end of a video no longer hang it (the title video).
-- Contended guest mutexes are handed to a waiting thread: Linux let the menu's audio thread
-  take its mutex back every cycle, so the main thread could wait up to a minute at boot.
+- A guest mutex is handed to a thread that has waited over 100 ms for it: Linux let the menu's
+  audio thread take its mutex back every cycle, so the main thread could wait up to a minute at
+  boot. Shorter waits are left alone (`BB_MUTEX_HANDOFF=0` turns the hand-over off).
+- Thread dumps (`pkill -ALRM bb-probe`) also list guest code addresses found on each stack.
 - The upscaler's jitter also applies to passes drawn on a second scene-sized depth buffer.
 - `tools/toggle_bisect.py` finds which renderer optimization breaks a game's picture while it
   runs (with `BB_TOGGLE_FILE`).

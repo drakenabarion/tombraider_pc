@@ -9,18 +9,24 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/syscall.h>
-static int host_tid(void) { return (int)syscall(SYS_gettid); }
+static __thread int cached_tid;
+static int host_tid(void) {
+    if (!cached_tid) cached_tid = (int)syscall(SYS_gettid);
+    return cached_tid;
+}
 typedef struct { int type; } GuestAttr;
 typedef struct {
     pthread_mutex_t native;
     /* Hand-over when contended: Linux lets a thread that unlocks take the mutex straight back
      * before the waiter it woke can run. Virtual-On's collection menu holds its audio mutex
      * across sceAudioOutOutputs (about 10 ms) and relocks at once, which kept the main thread
-     * waiting for up to a minute at boot. A thread that releases with waiters queued now waits
-     * (at most 2 ms) for one of them to take it before locking again. */
+     * waiting for up to a minute at boot. A thread that waits over 100 ms marks the mutex as
+     * starving (again every 100 ms while it waits); the next thread to release it then waits
+     * (at most 2 ms) for the starving thread to take it before locking again. A hand-over that
+     * times out clears the mark, so it costs at most 2 ms per 100 ms of real starvation. */
     int owner, depth;      /* host thread id and recursion depth of the current owner */
-    int waiters;           /* threads blocked in lock (atomic) */
-    int handoff;           /* thread that released with waiters queued, until one takes it */
+    int starving;          /* set by a thread that has waited over 100 ms, renewed every 100 ms */
+    int handoff;           /* thread that released while one was starving, until it takes it */
     void *site;            /* diagnostics: where in guest code the owner locked */
 } GuestMutex;
 static size_t created, locks, unlocks;
@@ -95,17 +101,22 @@ static int deadline_after(struct timespec *end, uint64_t usec);
 static void acquired(GuestMutex *m, int me, void *site) {
     if (m->owner == me) ++m->depth;
     else { m->owner = me; m->depth = 1; m->site = site; }
+    if (__atomic_load_n(&m->starving, __ATOMIC_RELAXED)) __atomic_store_n(&m->starving, 0, __ATOMIC_RELAXED);
     if (__atomic_load_n(&m->handoff, __ATOMIC_RELAXED) && __atomic_load_n(&m->handoff, __ATOMIC_RELAXED) != me)
         __atomic_store_n(&m->handoff, 0, __ATOMIC_RELAXED);
     ++locks;
 }
-/* The releasing thread gives a queued waiter the first chance at the mutex. */
+/* The releasing thread gives the starving thread the first chance at the mutex. */
 static void wait_for_handoff(GuestMutex *m, int me) {
     if (__atomic_load_n(&m->handoff, __ATOMIC_ACQUIRE) != me) return;
-    for (int i = 0; i < 40 && __atomic_load_n(&m->handoff, __ATOMIC_ACQUIRE) == me &&
-                    __atomic_load_n(&m->waiters, __ATOMIC_ACQUIRE); ++i) {
+    int i = 0;
+    for (; i < 40 && __atomic_load_n(&m->handoff, __ATOMIC_ACQUIRE) == me &&
+           __atomic_load_n(&m->starving, __ATOMIC_ACQUIRE); ++i) {
         struct timespec pause = {0, 50000};
         nanosleep(&pause, NULL);
+    }
+    if (i == 40) {
+        __atomic_store_n(&m->starving, 0, __ATOMIC_RELEASE); /* until the waiter renews it */
     }
     __atomic_compare_exchange_n(&m->handoff, &me, 0, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED);
 }
@@ -118,9 +129,16 @@ static ABI int32_t mutex_lock(GuestMutex **mutex) {
     if (m->owner != me) wait_for_handoff(m, me);
     int native = pthread_mutex_trylock(&m->native);
     if (native == EBUSY && m->owner != me) {
-        __atomic_add_fetch(&m->waiters, 1, __ATOMIC_ACQ_REL);
-        native = pthread_mutex_lock(&m->native);
-        __atomic_sub_fetch(&m->waiters, 1, __ATOMIC_ACQ_REL);
+        /* Ordinary contention is left to the host: threads that pass a mutex back and forth
+         * within milliseconds (the menu's main and worker threads, many times per frame) must
+         * not be slowed down. Every 100 ms spent waiting marks the mutex as starving. */
+        for (;;) {
+            struct timespec end;
+            if (deadline_after(&end, 100000)) { native = pthread_mutex_lock(&m->native); break; }
+            native = pthread_mutex_timedlock(&m->native, &end);
+            if (native != ETIMEDOUT) break;
+            __atomic_store_n(&m->starving, 1, __ATOMIC_RELEASE);
+        }
     } else if (native == EBUSY) {
         native = pthread_mutex_lock(&m->native); /* relock by the owner: recursive or error-check */
     }
@@ -136,10 +154,13 @@ static ABI int32_t mutex_trylock(GuestMutex **mutex) {
     return e;
 }
 /* Bookkeeping before the host mutex is released (unlock, condition wait). */
+static int handoff_enabled = -1; /* BB_MUTEX_HANDOFF=0 turns the hand-over off (diagnosis) */
 static void releasing(GuestMutex *m, int me) {
     if (m->owner == me && --m->depth > 0) return;
     m->owner = 0; m->depth = 0;
-    if (__atomic_load_n(&m->waiters, __ATOMIC_ACQUIRE)) __atomic_store_n(&m->handoff, me, __ATOMIC_RELEASE);
+    if (handoff_enabled < 0) { const char *v = getenv("BB_MUTEX_HANDOFF"); handoff_enabled = !(v && v[0] == '0'); }
+    if (handoff_enabled && __atomic_load_n(&m->starving, __ATOMIC_ACQUIRE))
+        __atomic_store_n(&m->handoff, me, __ATOMIC_RELEASE);
 }
 static ABI int32_t mutex_unlock(GuestMutex **mutex) {
     if (!mutex || (uintptr_t)*mutex == 2) return orbis_error(EINVAL);

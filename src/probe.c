@@ -306,12 +306,33 @@ static void dump_frames(ucontext_t *uc) {
         rbp=frame[0]; rip=frame[1];
     }
 }
-static void thread_dump(int sig, siginfo_t *info, void *context) { (void)sig; (void)info; dump_frames(context); }
+static uint64_t guest_image_size;
+/* The rbp chain stops in host code built without frame pointers: also list guest code
+ * addresses found on the stack (return address candidates, innermost first). */
+static void scan_stack(ucontext_t *uc) {
+    uintptr_t rsp=(uintptr_t)uc->uc_mcontext.gregs[REG_RSP];
+    uintptr_t words[1024];
+    struct iovec local={words,sizeof(words)}, remote={(void *)rsp,sizeof(words)};
+    ssize_t got=process_vm_readv(getpid(),&local,1,&remote,1,0);
+    if (got<=0) return;
+    char line[]="    stack guest=0000000000000000\n";
+    int shown=0;
+    for (size_t i=0; i<(size_t)got/8 && shown<16; ++i) {
+        uintptr_t v=words[i];
+        if (v>(uintptr_t)image && v<(uintptr_t)image+guest_image_size) {
+            write_hex(line+16,v-(uintptr_t)image);
+            ssize_t written_=write(2,line,sizeof(line)-1); (void)written_;
+            ++shown;
+        }
+    }
+}
+static void thread_dump(int sig, siginfo_t *info, void *context) { (void)sig; (void)info; dump_frames(context); scan_stack(context); }
 static void watchdog(int sig, siginfo_t *info, void *context) {
     (void)info;
     const char head[]="STOP: watchdog timeout; thread stacks:\n";
     { ssize_t written_=write(2,head,sizeof(head)-1); (void)written_; }
     dump_frames(context);
+    scan_stack(context);
     int dir=open("/proc/self/task",O_RDONLY|O_DIRECTORY);
     char buffer[4096];
     long n;
@@ -401,7 +422,6 @@ static void apply_patches(const char *path, Segment *segments, uint64_t ns, cons
 typedef struct { volatile uint64_t calls, rdi, rsi, rdx, rcx, r8, r15; uint64_t offset, printed; } GuestHook;
 static GuestHook *guest_hooks;
 static size_t guest_hook_count;
-static uint64_t guest_image_size;
 /* A pointer argument into the image (or guest memory the tracker knows) shown as text. */
 static void print_hook_string(const char *name, uint64_t value) {
     const unsigned char *p=(const unsigned char *)(uintptr_t)value;
