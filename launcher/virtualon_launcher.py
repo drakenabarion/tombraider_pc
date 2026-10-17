@@ -152,7 +152,7 @@ APP_DEFAULTS = {'game_dir': '', 'user_dir': '', 'start': 'menu', 'language': '1'
                 'anti_aliasing': 'off', 'aa_sharpness': '0.2', 'frame_generation': 'off',
                 'frame_gen_multiplier': '2', 'extra_env': '', 'close_on_play': False,
                 'mouse_look': False, 'mouse_sensitivity': '1.0', 'mouse_invert_y': False,
-                'pad_invert_y': False, 'key_bindings': {}, 'pad_bindings': {}, 'check_updates': True}
+                'pad_invert_y': False, 'key_bindings': {}, 'pad_bindings': {}}
 
 
 def _(text):
@@ -381,8 +381,8 @@ class Launcher:
         self.show('play')
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(100, self.drain_output)
-        if WINDOWS and self.app.get('check_updates', True):
-            threading.Thread(target=self.check_update, daemon=True).start()
+        # No update check: there are no releases yet (the code for it is kept from the Uncharted
+        # launcher, unused).
 
     def px(self, size):
         return int(size * self.dpi)
@@ -1134,15 +1134,6 @@ class Launcher:
         self.pill(holder, _('Clear shader cache'), self.clear_cache).pack(side='left')
         self.pill(holder, _('Open the saves folder'),
                   lambda: self.open_path(self.var('user_dir').get(), 'user_dir')).pack(side='left', padx=(8, 0))
-        self.section(f, _('Updates'))
-        self.check(f, 'check_updates', _('Look for a new version when the launcher starts'))
-        card = self.target(f)
-        holder = self.tk.Frame(card, bg=CARD)
-        holder.grid(row=self.next_row(card), column=0, columnspan=2, sticky='w', pady=(12, 0))
-        self.pill(holder, _('Check for updates'),
-                  lambda: threading.Thread(target=self.check_update, args=(True,), daemon=True).start()
-                  ).pack(side='left')
-        self.pill(holder, _('Releases page'), lambda: webbrowser.open(RELEASES_PAGE)).pack(side='left', padx=(8, 0))
 
     def build_log(self):
         tk = self.tk
