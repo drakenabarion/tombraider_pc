@@ -75,6 +75,8 @@ void runtime_report(void) {
     runtime_mutex_report();
     runtime_rwlock_report();
     runtime_sema_report();
+    runtime_evf_report();
+    runtime_ngs2_report();
     runtime_content_report();
     runtime_memory_report();
     runtime_ajm_report();
@@ -258,6 +260,10 @@ static uintptr_t resolve_once(const char *name, int is_data) {
     if (file) return file;
     uintptr_t fiber = runtime_fiber_resolve(name);
     if (fiber) return fiber;
+    uintptr_t evf = runtime_evf_resolve(name);
+    if (evf) return evf;
+    uintptr_t ngs2 = runtime_ngs2_resolve(name);
+    if (ngs2) return ngs2;
     uintptr_t extra = runtime_extra_resolve(name);
     if (extra) return extra;
     return bbgpu_resolve(name);

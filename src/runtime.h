@@ -52,6 +52,10 @@ uintptr_t runtime_lookup(const RuntimeExport *table, size_t count, const char *n
 uintptr_t runtime_kernel_resolve(const char *name);
 /* Imports of newer SDKs and other libraries (runtime_extra.c: Virtual-On). */
 uintptr_t runtime_extra_resolve(const char *name);
+uintptr_t runtime_evf_resolve(const char *name);
+void runtime_evf_report(void);
+uintptr_t runtime_ngs2_resolve(const char *name);
+void runtime_ngs2_report(void);
 uintptr_t runtime_file_resolve(const char *name);
 uintptr_t runtime_services_resolve(const char *name);
 void runtime_file_report(void);

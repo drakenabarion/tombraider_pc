@@ -7,8 +7,22 @@
 #include <pthread.h>
 #include <errno.h>
 #include <time.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+static int host_tid(void) { return (int)syscall(SYS_gettid); }
 typedef struct { int type; } GuestAttr;
-typedef struct { pthread_mutex_t native; } GuestMutex;
+typedef struct {
+    pthread_mutex_t native;
+    /* Hand-over when contended: Linux lets a thread that unlocks take the mutex straight back
+     * before the waiter it woke can run. Virtual-On's collection menu holds its audio mutex
+     * across sceAudioOutOutputs (about 10 ms) and relocks at once, which kept the main thread
+     * waiting for up to a minute at boot. A thread that releases with waiters queued now waits
+     * (at most 2 ms) for one of them to take it before locking again. */
+    int owner, depth;      /* host thread id and recursion depth of the current owner */
+    int waiters;           /* threads blocked in lock (atomic) */
+    int handoff;           /* thread that released with waiters queued, until one takes it */
+    void *site;            /* diagnostics: where in guest code the owner locked */
+} GuestMutex;
 static size_t created, locks, unlocks;
 static int32_t orbis_error(int e) {
     if (!e) return 0;
@@ -77,24 +91,65 @@ static int32_t ensure_mutex(GuestMutex **mutex) {
     pthread_mutex_unlock(&static_init);
     return e;
 }
+static int deadline_after(struct timespec *end, uint64_t usec);
+static void acquired(GuestMutex *m, int me, void *site) {
+    if (m->owner == me) ++m->depth;
+    else { m->owner = me; m->depth = 1; m->site = site; }
+    if (__atomic_load_n(&m->handoff, __ATOMIC_RELAXED) && __atomic_load_n(&m->handoff, __ATOMIC_RELAXED) != me)
+        __atomic_store_n(&m->handoff, 0, __ATOMIC_RELAXED);
+    ++locks;
+}
+/* The releasing thread gives a queued waiter the first chance at the mutex. */
+static void wait_for_handoff(GuestMutex *m, int me) {
+    if (__atomic_load_n(&m->handoff, __ATOMIC_ACQUIRE) != me) return;
+    for (int i = 0; i < 40 && __atomic_load_n(&m->handoff, __ATOMIC_ACQUIRE) == me &&
+                    __atomic_load_n(&m->waiters, __ATOMIC_ACQUIRE); ++i) {
+        struct timespec pause = {0, 50000};
+        nanosleep(&pause, NULL);
+    }
+    __atomic_compare_exchange_n(&m->handoff, &me, 0, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED);
+}
 static ABI int32_t mutex_lock(GuestMutex **mutex) {
     int32_t e = ensure_mutex(mutex);
     if (e) return e;
-    e = orbis_error(pthread_mutex_lock(&(*mutex)->native));
-    if (!e) ++locks;
+    GuestMutex *m = *mutex;
+    void *site = __builtin_return_address(0);
+    const int me = host_tid();
+    if (m->owner != me) wait_for_handoff(m, me);
+    int native = pthread_mutex_trylock(&m->native);
+    if (native == EBUSY && m->owner != me) {
+        __atomic_add_fetch(&m->waiters, 1, __ATOMIC_ACQ_REL);
+        native = pthread_mutex_lock(&m->native);
+        __atomic_sub_fetch(&m->waiters, 1, __ATOMIC_ACQ_REL);
+    } else if (native == EBUSY) {
+        native = pthread_mutex_lock(&m->native); /* relock by the owner: recursive or error-check */
+    }
+    e = orbis_error(native);
+    if (!e) acquired(m, me, site);
     return e;
 }
 static ABI int32_t mutex_trylock(GuestMutex **mutex) {
     int32_t e = ensure_mutex(mutex);
     if (e) return e;
     e = orbis_error(pthread_mutex_trylock(&(*mutex)->native));
-    if (!e) ++locks;
+    if (!e) acquired(*mutex, host_tid(), __builtin_return_address(0));
     return e;
+}
+/* Bookkeeping before the host mutex is released (unlock, condition wait). */
+static void releasing(GuestMutex *m, int me) {
+    if (m->owner == me && --m->depth > 0) return;
+    m->owner = 0; m->depth = 0;
+    if (__atomic_load_n(&m->waiters, __ATOMIC_ACQUIRE)) __atomic_store_n(&m->handoff, me, __ATOMIC_RELEASE);
 }
 static ABI int32_t mutex_unlock(GuestMutex **mutex) {
     if (!mutex || (uintptr_t)*mutex == 2) return orbis_error(EINVAL);
     if ((uintptr_t)*mutex < 2) return orbis_error(EPERM);
-    int32_t e = orbis_error(pthread_mutex_unlock(&(*mutex)->native));
+    GuestMutex *m = *mutex;
+    const int me = host_tid();
+    const int owner = m->owner, depth = m->depth;
+    if (owner == me) releasing(m, me);
+    int32_t e = orbis_error(pthread_mutex_unlock(&m->native));
+    if (e && owner == me) { m->owner = owner; m->depth = depth; } /* not released after all */
     if (!e) ++unlocks;
     return e;
 }
@@ -119,7 +174,7 @@ static ABI int32_t mutex_timedlock(GuestMutex **mutex, uint32_t usec) {
     struct timespec end;
     if (deadline_after(&end, usec)) return orbis_error(EINVAL);
     e = timed_error(pthread_mutex_timedlock(&(*mutex)->native, &end));
-    if (!e) ++locks;
+    if (!e) acquired(*mutex, host_tid(), __builtin_return_address(0));
     return e;
 }
 /* Condition variables: opaque handles over host pthread_cond (CLOCK_REALTIME,
@@ -160,14 +215,24 @@ static ABI int32_t cond_wait(GuestCond **cond, GuestMutex **mutex) {
     if (e) return e;
     if (!mutex || (uintptr_t)*mutex < 3) return orbis_error(EINVAL);
     ++waits;
-    return orbis_error(pthread_cond_wait(&(*cond)->native, &(*mutex)->native));
+    GuestMutex *m = *mutex;
+    const int me = host_tid(), depth = m->depth;
+    m->owner = 0; m->depth = 0; /* the wait releases the mutex whatever its depth */
+    e = orbis_error(pthread_cond_wait(&(*cond)->native, &m->native));
+    m->owner = me; m->depth = depth ? depth : 1;
+    return e;
 }
 static int32_t cond_wait_until(GuestCond **cond, GuestMutex **mutex, const struct timespec *end) {
     int32_t e = ensure_cond(cond);
     if (e) return e;
     if (!mutex || (uintptr_t)*mutex < 3 || !end) return orbis_error(EINVAL);
     ++waits;
-    return timed_error(pthread_cond_timedwait(&(*cond)->native, &(*mutex)->native, end));
+    GuestMutex *m = *mutex;
+    const int me = host_tid(), depth = m->depth;
+    m->owner = 0; m->depth = 0;
+    const int32_t result = timed_error(pthread_cond_timedwait(&(*cond)->native, &m->native, end));
+    m->owner = me; m->depth = depth ? depth : 1;
+    return result;
 }
 static ABI int32_t cond_timedwait(GuestCond **cond, GuestMutex **mutex, uint32_t usec) {
     struct timespec end;

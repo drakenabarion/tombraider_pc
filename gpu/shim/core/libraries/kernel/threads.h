@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <stop_token>
 #include <system_error>
 #include <thread>
@@ -28,35 +29,42 @@ public:
         });
     }
     // A thread may stop its own Thread object (AvPlayer does); it detaches instead of joining.
+    // Two threads may also join the same Thread at once (AvPlayer: the demuxer at end of file
+    // and the game in sceAvPlayerStop); joins are serialized so the second finds it joined
+    // (two concurrent std::thread::join calls are undefined and can block forever).
     // bbport: these are called from guest code, which a C++ exception cannot unwind: a failed
     // join is logged and the thread detached instead.
     void Join() {
+        if (thread.get_id() == std::this_thread::get_id()) {
+            // Joining itself: detach unless another thread is joining it right now (that join
+            // needs this thread to return, so it must not wait for the lock).
+            std::unique_lock lock(join_mutex, std::try_to_lock);
+            if (lock.owns_lock() && thread.joinable()) thread.detach();
+            return;
+        }
+        std::lock_guard lock(join_mutex);
         if (!thread.joinable()) return;
         try {
-            if (thread.get_id() == std::this_thread::get_id()) thread.detach();
-            else thread.join();
+            thread.join();
         } catch (const std::system_error& error) {
             // Windows (libc++ on Win32 threads): the join can fail although the thread is fine.
             // Wait for its function to return, so nothing it uses is freed under it, then let go.
             std::fprintf(stderr, "HLE thread: join failed (%s); waiting for it to finish\n", error.what());
-            if (thread.get_id() != std::this_thread::get_id()) {
-                for (int waited = 0; finished && !finished->load() && waited < 5000; ++waited) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                }
+            for (int waited = 0; finished && !finished->load() && waited < 5000; ++waited) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
             if (thread.joinable()) thread.detach();
         }
     }
     bool Joinable() const { return thread.joinable(); }
     void Stop() {
-        if (thread.joinable()) {
-            thread.request_stop();
-            Join();
-        }
+        thread.request_stop(); // no effect once joined or detached
+        Join();
     }
 
 private:
     std::jthread thread;
     std::shared_ptr<std::atomic<bool>> finished;
+    std::mutex join_mutex;
 };
 } // namespace Libraries::Kernel

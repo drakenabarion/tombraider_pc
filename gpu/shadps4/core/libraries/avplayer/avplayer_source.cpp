@@ -368,6 +368,17 @@ bool AvPlayerSource::GetVideoData(AvPlayerFrameInfoEx& video_info) {
         return false;
     }
 
+    // When the game never requests audio, purge expired audio so that the decoder can move to
+    // relevant audio instead of getting stuck on audio that will never be played
+    if (m_audio_stream_index && !m_last_data_time.has_value()) {
+        const auto clock = CurrentTime();
+        while (m_audio_frames.Size() != 0 && m_audio_frames.Front().info.timestamp <= clock) {
+            auto stale = m_audio_frames.Pop();
+            m_audio_buffers.Push(std::move(stale->buffer));
+            m_audio_buffers_cv.Notify();
+        }
+    }
+
     if (m_video_frames.Size() == 0) {
         return false;
     }
@@ -476,7 +487,9 @@ u64 AvPlayerSource::CurrentTime() {
 
     using namespace std::chrono;
     const auto now = m_is_paused.load() ? m_pause_time : high_resolution_clock::now();
-    if (m_audio_stream_index) {
+    // Allows AV Playback to use real time since playback started as a source for timing until the
+    // game requests audio. This can fix freezes in cases where audio is not requested by the game.
+    if (m_audio_stream_index && m_last_data_time.has_value()) {
         const auto last_audio = m_last_data_time.value_or(now);
         const auto elapsed =
             duration_cast<milliseconds>(now - last_audio - m_pause_duration).count();

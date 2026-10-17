@@ -23,8 +23,9 @@ Work in progress.
 
 - **Cyber Troopers Virtual-On** (`omg`), **Virtual-On Oratorio Tangram** (`ot`) and
   **Virtual-On Force** (`force`): boot, menus and matches play and render correctly.
-- **The collection menu** (`eboot.bin`): not supported yet (needs NGS2 audio and kernel event
-  flags). Each game starts directly instead.
+- **The collection menu** (`eboot.bin`, `BB_EXE=menu`): boots through the logos and title video to
+  the menu and starts each game. Its own sound effects and music are silent for now (NGS2 renders
+  silence).
 - Audio: the port outputs through PipeWire; not checked yet.
 - Online play is not available: network and RUDP calls report offline.
 
@@ -67,6 +68,13 @@ Saves and caches go to `user/` unless `BB_USER_DIR` says otherwise.
   the mask with stale memory: square shadows. shadPS4 has the same bug.
 - A draw that samples one of its own render targets gets a barrier between the write and the
   read (`BB_FEEDBACK_BARRIER=0` turns it off).
+- Kernel event flags and a silent NGS2 (`src/runtime_evf.c`, `src/runtime_ngs2.c`), for the
+  collection menu.
+- Video playback: the clock runs on real time until the game asks for audio, and audio the game
+  never takes is dropped once expired (the SEGA logo froze otherwise). Two threads joining the
+  same player thread at the end of a video no longer hang it (the title video).
+- Contended guest mutexes are handed to a waiting thread: Linux let the menu's audio thread
+  take its mutex back every cycle, so the main thread could wait up to a minute at boot.
 - The upscaler's jitter also applies to passes drawn on a second scene-sized depth buffer.
 - `tools/toggle_bisect.py` finds which renderer optimization breaks a game's picture while it
   runs (with `BB_TOGGLE_FILE`).
