@@ -1,0 +1,44 @@
+// libSceNgs2 from AnyPS5 (github.com/boykopovar/AnyPS5, GPL-2.0; Adrià Franch, boykopovar),
+// as patched for Quake (drakenabarion/AnyPS5). bbport: built into libbbgpu (ngs2_register.cpp).
+#include <cstddef>
+#include <cstdint>
+
+#include "ngs2_general.h"
+#include "Ngs2Types.hpp"
+
+#pragma GCC visibility push(default)
+
+extern "C" {
+
+int APS5_VABI sceNgs2GeomApply(const Ngs2GeomListenerWork* listener, const Ngs2GeomSourceParam* source, Ngs2GeomAttribute* out_attrib, uint32_t flags) {
+    (void)listener;
+    (void)source;
+    (void)out_attrib;
+    (void)flags;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNgs2GeomCalcListener(const Ngs2GeomListenerParam* param, Ngs2GeomListenerWork* out_work, uint32_t flags) {
+    (void)param;
+    (void)out_work;
+    (void)flags;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNgs2GeomResetListenerParam(Ngs2GeomListenerParam* out_listener_param) {
+    (void)out_listener_param;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNgs2GeomResetSourceParam(Ngs2GeomSourceParam* out_source_param) {
+    (void)out_source_param;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+}
+
+#pragma GCC visibility pop

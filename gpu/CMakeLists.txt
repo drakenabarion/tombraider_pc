@@ -158,6 +158,14 @@ add_library(bbgpu ${BBGPU_KIND} ${VIDEO_CORE} ${RECOMPILER} ${COMMON} ${SHIM_SOU
     shadps4/core/libraries/videodec/video_utils.cpp
     shadps4/core/libraries/videodec/videodec2.cpp shadps4/core/libraries/videodec/videodec2_impl.cpp)
 add_dependencies(bbgpu host_shaders)
+# NGS2 (shim/ngs2, from AnyPS5) decodes ATRAC9 sampler voices with LibAtrac9, built into the library.
+file(GLOB BBGPU_ATRAC9 CONFIGURE_DEPENDS ../third_party/LibAtrac9/C/src/*.c)
+add_library(bbgpu_atrac9 STATIC ${BBGPU_ATRAC9})
+target_compile_options(bbgpu_atrac9 PRIVATE -w)
+set_target_properties(bbgpu_atrac9 PROPERTIES C_STANDARD 99 POSITION_INDEPENDENT_CODE ON
+    C_VISIBILITY_PRESET hidden INTERPROCEDURAL_OPTIMIZATION OFF)
+target_include_directories(bbgpu PRIVATE ../third_party/LibAtrac9/C/src)
+target_link_libraries(bbgpu PRIVATE bbgpu_atrac9)
 # bbport co-op: PS4 network and PSN libraries with the shadNet client, from shadp2p
 # (github.com/Wozzardman/shadp2p, GPL-2.0), for private Bloodborne co-op servers.
 find_package(Protobuf REQUIRED)

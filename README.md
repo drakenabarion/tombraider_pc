@@ -24,9 +24,8 @@ Work in progress.
 - **Cyber Troopers Virtual-On** (`omg`), **Virtual-On Oratorio Tangram** (`ot`) and
   **Virtual-On Force** (`force`): boot, menus and matches play and render correctly.
 - **The collection menu** (`eboot.bin`, `BB_EXE=menu`): boots through the logos and title video to
-  the menu and starts each game. Its own sound effects and music are silent for now (NGS2 renders
-  silence).
-- Audio: the port outputs through PipeWire; not checked yet.
+  the menu and starts each game, with its sound through NGS2.
+- Audio: the games, the collection menu and its videos play their sound (PipeWire).
 - Online play is not available: network and RUDP calls report offline.
 
 ## Requirements
@@ -81,8 +80,8 @@ Tangram) or `force` (Force). Saves and caches go to `user/` unless `BB_USER_DIR`
   the mask with stale memory: square shadows. shadPS4 has the same bug.
 - A draw that samples one of its own render targets gets a barrier between the write and the
   read (`BB_FEEDBACK_BARRIER=0` turns it off).
-- Kernel event flags and a silent NGS2 (`src/runtime_evf.c`, `src/runtime_ngs2.c`), for the
-  collection menu.
+- Kernel event flags (`src/runtime_evf.c`) and NGS2, the menu's audio library
+  (`gpu/shim/ngs2`, from AnyPS5), for the collection menu.
 - Video playback: the clock runs on real time until the game asks for audio, and audio the game
   never takes is dropped once expired (the SEGA logo froze otherwise). Two threads joining the
   same player thread at the end of a video no longer hang it (the title video).
@@ -109,6 +108,7 @@ DLSS bridge come from
 Also used: [FSR-Vulkan](https://github.com/FireBurn/FSR-Vulkan) and the AMD FidelityFX SDK (FSR),
 FSR 4 assets from [FireBurn/Q2RTX](https://github.com/FireBurn/Q2RTX), the
 [NVIDIA DLSS SDK](https://github.com/NVIDIA/DLSS) (NVIDIA's DLSS libraries under NVIDIA's license),
+the NGS2 implementation of [AnyPS5](https://github.com/boykopovar/AnyPS5) (GPL-2.0),
 [LibAtrac9](https://github.com/Thealexbarney/LibAtrac9), [SDL3](https://github.com/libsdl-org/SDL),
 [FFmpeg](https://ffmpeg.org), [Dear ImGui](https://github.com/ocornut/imgui),
 [sirit](https://github.com/shadps4-emu/sirit), [magic_enum](https://github.com/Neargye/magic_enum),

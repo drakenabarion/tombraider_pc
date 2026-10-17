@@ -263,6 +263,7 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
 }
 
 namespace Libraries::Kernel { void StartKernelService(); }
+namespace Libraries::Ngs2 { void RegisterLib(Core::Loader::SymbolsResolver* sym); } // shim/ngs2
 extern "C" void bbnet_register(void); // bbnet/bbnet_glue.cpp: network and PSN (co-op)
 extern "C" void bbgpu_register_kernel(void) {
     Libraries::Kernel::StartKernelService();
@@ -270,6 +271,7 @@ extern "C" void bbgpu_register_kernel(void) {
     Libraries::Kernel::RegisterEventQueue(&resolver);
     Libraries::AvPlayer::RegisterLib(&resolver);
     Libraries::Videodec2::RegisterLib(&resolver);
+    Libraries::Ngs2::RegisterLib(&resolver);
     bbnet_register();
 }
 
