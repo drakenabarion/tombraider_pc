@@ -342,6 +342,8 @@ private:
     bool gbuffer_draw = false;
     std::unique_ptr<TemporalUpscaler> upscaler; // bbport: FSR (docs/upscaler.md)
     [[nodiscard]] bool JitterDepth(VideoCore::ImageId depth);
+    void FeedbackBarrier();
+    void DumpSampled();
     u64 stale_vertex_inputs{}; ///< prepared vertex inputs rejected: their V# table changed
     std::array<float, 2> draw_jitter{};         ///< viewport offset of the current draw, pixels
     std::array<float, 2> target_scale{1.0f, 1.0f}; ///< pass drawn into the upscaler's output-size images
@@ -474,6 +476,10 @@ private:
     boost::container::static_vector<ImageDescCacheEntry*, Shader::NUM_IMAGES> image_binding_entries;
     bool fault_process_pending{};
     bool attachment_feedback_loop{};
+    bool feedback_read{}; ///< this draw samples one of its render targets (FeedbackBarrier)
+    // DumpSampled (BB_DUMP_SAMPLED): R8 textures sampled by the current draw, while dumping.
+    std::vector<VideoCore::ImageId> pending_dumps;
+    u64 dump_polls{}, dump_remaining{}, dump_draw{};
     bool needs_barrier{};
     // bbport: two-stage draw pipeline (stage B state; the thread is the last member so it
     // stops first).

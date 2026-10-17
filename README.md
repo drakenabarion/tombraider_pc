@@ -2,10 +2,15 @@
 
 **Cyber Troopers Virtual-On Masterpiece 1995~2001 (PS4, CUSA16156) running natively on Linux.**
 
-The original PS4 game code runs directly on the PC and the graphics are translated to Vulkan,
-the same approach as the Bloodborne and Uncharted PC ports this project is built on. It is not
-an emulator: there is no CPU emulation, and the PS4 system libraries are replaced by a small
-native runtime.
+The original PS4 game code runs directly on the PC and the graphics are translated to Vulkan.
+It is not an emulator: there is no CPU emulation, and the PS4 system libraries are replaced by a
+small native runtime.
+
+**Lineage:** [bbport](https://github.com/deadinside28/bloodborne_pc) (Bloodborne, deadinside28)
+→ [uncharted_pc](https://github.com/Supermedo/uncharted_pc) (Uncharted collection, SuperMedo)
+→ this port. The renderer is [shadPS4](https://github.com/shadps4-emu/shadPS4)'s video core.
+The git history carries all three, and the code still uses bbport's names (`BB_*` settings,
+`bbport_*` files) so fixes can move between the projects.
 
 > **No game files are included.** You need your own decrypted dump of the game (the folder
 > with `eboot.bin`, `pjv3.elf`, `sce_module`, `sce_sys` and the game data). Plain decrypted
@@ -16,9 +21,8 @@ native runtime.
 
 Work in progress.
 
-- **Cyber Troopers Virtual-On** (`omg`): boots, menus and matches play and render correctly.
-- **Virtual-On Oratorio Tangram** (`ot`) and **Virtual-On Force** (`force`): same executable,
-  not checked yet.
+- **Cyber Troopers Virtual-On** (`omg`), **Virtual-On Oratorio Tangram** (`ot`) and
+  **Virtual-On Force** (`force`): boot, menus and matches play and render correctly.
 - **The collection menu** (`eboot.bin`): not supported yet (needs NGS2 audio and kernel event
   flags). Each game starts directly instead.
 - Audio: the port outputs through PipeWire; not checked yet.
@@ -58,6 +62,11 @@ Saves and caches go to `user/` unless `BB_USER_DIR` says otherwise.
   dialogs, screenshots, more save data calls (`src/runtime_extra.c` and others).
 - Prepared vertex inputs are checked against the game's current vertex tables before use;
   Virtual-On rewrites those tables between the preparation and the draw.
+- A DMA copy of a memory range onto itself no longer reloads the textures in that range.
+  Force issues one over each mech's shadow mask right after drawing it, and the reload replaced
+  the mask with stale memory: square shadows. shadPS4 has the same bug.
+- A draw that samples one of its own render targets gets a barrier between the write and the
+  read (`BB_FEEDBACK_BARRIER=0` turns it off).
 - The upscaler's jitter also applies to passes drawn on a second scene-sized depth buffer.
 - `tools/toggle_bisect.py` finds which renderer optimization breaks a game's picture while it
   runs (with `BB_TOGGLE_FILE`).

@@ -17,6 +17,8 @@
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
+#include <filesystem>
+#include <vk_mem_alloc.h>
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
@@ -1571,6 +1573,8 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     }
     UpdateDynamicState(pipeline, is_indexed);
     MarkPass(pipeline, state);
+    DumpSampled();
+    FeedbackBarrier();
     scheduler.BeginRendering(state);
 
     const auto& vs_info = pipeline->GetStage(Shader::SwStage::Vertex);
@@ -1734,6 +1738,8 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     }
     UpdateDynamicState(pipeline, is_indexed);
     MarkPass(pipeline, state);
+    DumpSampled();
+    FeedbackBarrier();
     scheduler.BeginRendering(state);
 
     ASSERT(stride == (is_indexed ? sizeof(VkDrawIndexedIndirectCommand)
@@ -2422,6 +2428,39 @@ void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
                 !BbToggle::Disabled(BbToggle::PreparedVertex)
             ? &prepared->vertex
             : nullptr;
+    // bbport diagnosis: BB_TRACE_BUFFERS also covers vertex shaders: the V# and first floats of
+    // each vertex stream (BB_TRACE_COUNT draws, BB_TRACE_WORDS floats).
+    static const char* const trace = std::getenv("BB_TRACE_BUFFERS");
+    if (trace && fetch) {
+        const auto& vs_info = pipeline->GetStage(Shader::SwStage::Vertex);
+        char hash[16];
+        std::snprintf(hash, sizeof(hash), "%08x", u32(vs_info.pgm_hash));
+        static std::atomic<u32> vtraced{0};
+        static const u32 vcount = [] {
+            const char* env = std::getenv("BB_TRACE_COUNT");
+            return env ? u32(std::strtoul(env, nullptr, 10)) : 6u;
+        }();
+        static const u32 vwords = [] {
+            const char* env = std::getenv("BB_TRACE_WORDS");
+            return env ? u32(std::strtoul(env, nullptr, 10)) : 15u;
+        }();
+        if (std::strstr(trace, hash) && vtraced.fetch_add(1, std::memory_order_relaxed) < vcount) {
+            for (u32 i = 0; i < fetch->attributes.size(); ++i) {
+                const auto v = fetch->attributes[i].GetSharp(vs_info);
+                std::printf("Trace %s vertex attr %u (semantic %u): at 0x%llx stride %u records %u "
+                            "dfmt %u nfmt %u:", hash, i, u32(fetch->attributes[i].semantic),
+                            static_cast<unsigned long long>(v.base_address), u32(v.GetStride()),
+                            u32(v.num_records), u32(v.GetDataFmt()), u32(v.GetNumberFmt()));
+                if (v.base_address && memory->IsValidGpuMapping(v.base_address, vwords * 4)) {
+                    const auto* words = reinterpret_cast<const float*>(v.base_address);
+                    for (u32 w = 0; w < vwords; ++w) {
+                        std::printf(" %g", words[w]);
+                    }
+                }
+                std::printf("\n");
+            }
+        }
+    }
     // The V#s come from a table in guest memory the user data points to, which the register and
     // flattened user data checks do not cover: Virtual-On rewrites such tables between the
     // worker's read and the draw (stale vertex streams: geometry scattered, wrong textures).
@@ -2776,13 +2815,55 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
     const u64 alignment = instance.StorageMinAlignment();
     // bbport diagnosis: BB_TRACE_BUFFERS=<hash> prints the V# of every buffer binding of that
     // shader and the first bytes of guest memory behind it (first 6 draws).
-    static const u64 trace_hash = [] {
+    // Several shaders: BB_TRACE_BUFFERS=<hash>,<hash>,...
+    static const std::vector<u32> trace_hashes = [] {
+        std::vector<u32> out;
         const char* env = std::getenv("BB_TRACE_BUFFERS");
-        return env ? std::strtoull(env, nullptr, 16) : 0ull;
+        while (env && *env) {
+            char* end{};
+            out.push_back(u32(std::strtoull(env, &end, 16)));
+            env = (end && *end == ',') ? end + 1 : nullptr;
+        }
+        return out;
     }();
-    if (trace_hash && u32(stage.pgm_hash) == u32(trace_hash)) {
-        static std::atomic<u32> traced{0};
-        if (traced.fetch_add(1, std::memory_order_relaxed) < 6) {
+    const auto trace_it = std::ranges::find(trace_hashes, u32(stage.pgm_hash));
+    const bool traced_stage = trace_it != trace_hashes.end();
+    // BB_TRACE_COUNT: how many draws (default 6); each line also names render target 0.
+    static const u32 trace_count = [] {
+        const char* env = std::getenv("BB_TRACE_COUNT");
+        return env ? u32(std::strtoul(env, nullptr, 10)) : 6u;
+    }();
+    if (traced_stage) {
+        static std::array<std::atomic<u32>, 8> traced{}; // per traced shader
+        const auto slot = std::min<size_t>(trace_it - trace_hashes.begin(), traced.size() - 1);
+        if (traced[slot].fetch_add(1, std::memory_order_relaxed) < trace_count) {
+            const auto& cb0 = Regs().color_buffers[0];
+            std::printf("Trace %08x render target 0: at 0x%llx %ux%u format %u tile %u\n",
+                        u32(stage.pgm_hash), static_cast<unsigned long long>(cb0.Address()),
+                        u32(cb0.Pitch()), u32(cb0.Height()), u32(cb0.info.format),
+                        u32(cb0.attrib.tile_mode_index));
+            if (stage.sw_stage == Shader::SwStage::Fragment) {
+                const auto& bc = Regs().blend_control[0];
+                std::printf("Trace %08x blend: enable %u color src %u func %u dst %u, alpha src %u "
+                            "func %u dst %u separate %u; write mask %#x; comp swap %u number type "
+                            "%u; fast clear %u compression %u clear words %08x %08x; cmask at "
+                            "0x%llx; color control mode %u\n",
+                            u32(stage.pgm_hash), u32(bc.enable), u32(bc.color_src_factor),
+                            u32(bc.color_func), u32(bc.color_dst_factor), u32(bc.alpha_src_factor),
+                            u32(bc.alpha_func), u32(bc.alpha_dst_factor),
+                            u32(bc.separate_alpha_blend), Regs().color_target_mask.GetMask(0),
+                            u32(cb0.info.comp_swap), u32(cb0.info.number_type),
+                            u32(cb0.info.fast_clear), u32(cb0.info.compression), cb0.clear_word0,
+                            cb0.clear_word1, static_cast<unsigned long long>(cb0.CmaskAddress()),
+                            u32(Regs().color_control.mode));
+            }
+            for (u32 i = 0; i < stage.images.size(); ++i) {
+                const auto t = prepared ? prepared->image_sharps[i] : stage.images[i].GetSharp(stage);
+                std::printf("Trace %08x image %u: at 0x%llx %ux%u pitch %u dfmt %u tile %u\n",
+                            u32(stage.pgm_hash), i, static_cast<unsigned long long>(t.Address()),
+                            u32(t.width + 1), u32(t.height + 1), u32(t.Pitch()),
+                            u32(t.GetDataFmt()), u32(t.tiling_index));
+            }
             for (u32 i = 0; i < stage.buffers.size(); ++i) {
                 if (stage.buffers[i].IsSpecial()) {
                     continue;
@@ -2793,10 +2874,15 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                             static_cast<unsigned long long>(v.base_address), u32(v.GetStride()),
                             u32(v.num_records), u32(v.GetDataFmt()), u32(v.GetNumberFmt()),
                             int(stage.buffers[i].is_written));
-                if (v.base_address && memory->IsValidGpuMapping(v.base_address, 64)) {
-                    const auto* words = reinterpret_cast<const u32*>(v.base_address);
-                    for (u32 w = 0; w < 15; ++w) {
-                        std::printf(" %08x", words[w]);
+                // BB_TRACE_WORDS: how many words to print (default 15), as floats.
+                static const u32 trace_words = [] {
+                    const char* env = std::getenv("BB_TRACE_WORDS");
+                    return env ? u32(std::strtoul(env, nullptr, 10)) : 15u;
+                }();
+                if (v.base_address && memory->IsValidGpuMapping(v.base_address, trace_words * 4)) {
+                    const auto* words = reinterpret_cast<const float*>(v.base_address);
+                    for (u32 w = 0; w < trace_words; ++w) {
+                        std::printf(" %g", words[w]);
                     }
                 }
                 std::printf("\n");
@@ -3300,6 +3386,13 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             // target in feedback loop. Depth images are excluded because they can't be bound as
             // storage and feedback loop doesn't make sense for them
             if ((binding.force_general || binding.is_target) && !image.info.props.is_depth) {
+                feedback_read |= image.binding.is_target != 0;
+                // DumpSampled: a draw reading its own render target (the state before it).
+                if (dump_remaining && image.binding.is_target &&
+                    image.info.pixel_format == vk::Format::eR8Unorm &&
+                    image.info.size.width <= 1024 && image.info.size.height <= 1024) {
+                    pending_dumps.push_back(image_id);
+                }
                 if (instance.IsAttachmentFeedbackLoopLayoutSupported() && image.binding.is_target) {
                     barrier |= runtime.Transit(
                         &image, vk::ImageLayout::eAttachmentFeedbackLoopOptimalEXT,
@@ -3322,6 +3415,10 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                     barrier |= runtime.Transit(
                         &image, new_layout, vk::PipelineStageFlagBits2::eAllCommands,
                         vk::AccessFlagBits2::eShaderRead, desc.view_info.range);
+                    if (dump_remaining && image.info.pixel_format == vk::Format::eR8Unorm &&
+                        image.info.size.width <= 1024 && image.info.size.height <= 1024) {
+                        pending_dumps.push_back(image_id);
+                    }
                 }
             }
             image.usage.storage |= is_storage;
@@ -3955,6 +4052,12 @@ void Rasterizer::FillBuffer(VAddr address, u32 num_bytes, u32 value, bool is_gds
 }
 
 void Rasterizer::CopyBuffer(VAddr dst, VAddr src, u32 num_bytes, bool dst_gds, bool src_gds) {
+    if (!dst_gds && !src_gds && dst == src) {
+        // A DMA copy onto itself leaves memory unchanged. Virtual-On Force issues one over a
+        // render target it just drew (its shadow maps); invalidating the image here would
+        // reupload it from guest memory, which never received the rendered result.
+        return;
+    }
     DrainDrawPipe();
     if (const VAddr watch = WatchedGpuWrite(); watch && !dst_gds && dst < watch + 0x1000 && watch < dst + num_bytes) {
         static std::atomic<u32> reported{0};
@@ -4335,6 +4438,124 @@ bool Rasterizer::JitterDepth(VideoCore::ImageId depth) {
     return a && b && a->info.size.width == b->info.size.width &&
            a->info.size.height == b->info.size.height &&
            a->info.pixel_format == b->info.pixel_format;
+}
+
+// bbport: a draw that samples its own render target (a feedback loop: Virtual-On Force's shadow
+// passes read the 256x256 shadow they write) must see the writes of the draws before it. The
+// feedback loop layout allows the access but orders nothing; on the PS4 the game flushes the
+// colour caches between the draws. End the rendering, make the colour writes visible to shader
+// reads, and let the draw begin a new rendering (attachments load their contents).
+// BB_FEEDBACK_BARRIER=0: no barrier (as before, A/B).
+void Rasterizer::FeedbackBarrier() {
+    if (!feedback_read) {
+        return;
+    }
+    feedback_read = false;
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_FEEDBACK_BARRIER");
+        return !(env && env[0] == '0');
+    }();
+    if (!enabled) {
+        return;
+    }
+    scheduler.EndRendering();
+    scheduler.Record([](vk::CommandBuffer cmdbuf) {
+        const vk::MemoryBarrier2 barrier{
+            .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader |
+                            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            .dstAccessMask = vk::AccessFlagBits2::eShaderRead |
+                             vk::AccessFlagBits2::eColorAttachmentRead |
+                             vk::AccessFlagBits2::eColorAttachmentWrite,
+        };
+        cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &barrier});
+    });
+}
+
+// bbport: BB_DUMP_SAMPLED=<trigger file> (BB_DUMP_DIR, default out/dump): creating the file
+// writes every single-channel (R8) texture of up to 1024x1024 that the next 8000 draws sample, as
+// the draw sees it, to <dir>/d<draw>_<guest address>_<w>x<h>_r8.raw (Virtual-On Force: which
+// step of the shadow chain loses the silhouette).
+void Rasterizer::DumpSampled() {
+    static const char* trigger = std::getenv("BB_DUMP_SAMPLED");
+    if (!trigger) {
+        return;
+    }
+    if (!dump_remaining) {
+        pending_dumps.clear();
+        if ((++dump_polls & 1023) == 0 && std::remove(trigger) == 0) {
+            dump_remaining = 8000;
+            std::printf("Dump: sampled R8 textures of the next 8000 draws\n");
+        }
+        return;
+    }
+    ++dump_draw;
+    if (--dump_remaining == 0) {
+        std::printf("Dump: done\n");
+    }
+    if (pending_dumps.empty()) {
+        return;
+    }
+    static const std::string dir = [] {
+        const char* env = std::getenv("BB_DUMP_DIR");
+        std::string d = env && env[0] ? env : "out/dump";
+        std::error_code ec;
+        std::filesystem::create_directories(d, ec);
+        return d;
+    }();
+    scheduler.EndRendering();
+    std::sort(pending_dumps.begin(), pending_dumps.end());
+    pending_dumps.erase(std::unique(pending_dumps.begin(), pending_dumps.end()), pending_dumps.end());
+    for (const auto id : pending_dumps) {
+        auto& image = texture_cache.GetImage(id);
+        const u32 w = image.info.size.width, h = image.info.size.height;
+        const auto old_layout = image.backing->state.layout;
+        runtime.Transit(&image, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eTransfer,
+                        vk::AccessFlagBits2::eTransferRead);
+        runtime.FlushBarriers();
+        const VkBufferCreateInfo buffer_ci{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = VkDeviceSize(w) * h,
+            .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        };
+        const VmaAllocationCreateInfo alloc_ci{
+            .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+            .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+        };
+        VkBuffer buffer{};
+        VmaAllocation allocation{};
+        VmaAllocationInfo info{};
+        if (vmaCreateBuffer(instance.GetAllocator(), &buffer_ci, &alloc_ci, &buffer, &allocation,
+                            &info) != VK_SUCCESS) {
+            continue;
+        }
+        const vk::Image handle = image.GetImage();
+        scheduler.Record([handle, buffer, w, h](vk::CommandBuffer cmdbuf) {
+            const vk::BufferImageCopy region{
+                .imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                .imageExtent = {w, h, 1},
+            };
+            cmdbuf.copyImageToBuffer(handle, vk::ImageLayout::eGeneral, vk::Buffer(buffer), region);
+        });
+        char path[512];
+        std::snprintf(path, sizeof(path), "%s/d%06llu_%llx_%ux%u_r8.raw", dir.c_str(),
+                      static_cast<unsigned long long>(dump_draw),
+                      static_cast<unsigned long long>(image.info.guest_address), w, h);
+        scheduler.DeferPriorityOperation([allocator = instance.GetAllocator(), buffer, allocation,
+                                          info, size = buffer_ci.size, file = std::string{path}] {
+            vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
+            if (FILE* f = std::fopen(file.c_str(), "wb")) {
+                std::fwrite(info.pMappedData, 1, size, f);
+                std::fclose(f);
+            }
+            vmaDestroyBuffer(allocator, buffer, allocation);
+        });
+        runtime.Transit(&image, old_layout, vk::PipelineStageFlagBits2::eAllGraphics,
+                        vk::AccessFlagBits2::eShaderRead);
+    }
+    runtime.FlushBarriers();
+    pending_dumps.clear();
 }
 
 void Rasterizer::UpdateDepthStencilState() const {
