@@ -57,6 +57,7 @@ ldd "$dest/bin/bb-probe.exe" "$dest/bin/bb-gpu-capabilities.exe" |
 cp scripts/prepare.py scripts/link_modules.py scripts/link_libc.py scripts/content_profile.py "$dest/scripts/"
 cp run.py LICENSE "$dest/"
 cp packaging/windows/README-Virtual-On.txt "$dest/README.txt"
+cp packaging/CREDITS.txt "$dest/"
 mkdir -p "$dest/licenses"
 cp packaging/windows/licenses/*.txt "$dest/licenses/" 2>/dev/null || true
 # No FSR 4 or DLSS files: anti-aliasing is not wired up for Virtual-On yet (the launcher keeps it off).

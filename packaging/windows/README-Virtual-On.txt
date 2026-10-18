@@ -31,4 +31,5 @@ Data
 - Launcher options: %APPDATA%\virtualon-launcher. Generated files (prepared game image): out\.
 - The log of the last run: user\last_run.log (the launcher's Log page shows it live).
 
-Port by drakenabarion.
+Port by drakenabarion. What it builds on is credited in CREDITS.txt; the license is in
+LICENSE (GNU GPL v2 or later).

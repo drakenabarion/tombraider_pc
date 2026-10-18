@@ -45,7 +45,7 @@ if [[ -f out/libbbport_dlss.so ]]; then
 fi
 cp scripts/prepare.py scripts/link_modules.py scripts/link_libc.py scripts/content_profile.py \
    scripts/patches.py scripts/mods.py "$share/scripts/"
-cp run.py LICENSE "$share/"
+cp run.py LICENSE packaging/CREDITS.txt "$share/"
 [[ -d patches ]] && cp -r patches "$share/"
 [[ -d fsr4_shaders ]] && cp -r fsr4_shaders "$share/"
 cp launcher/virtualon.png launcher/virtualon.ico "$share/launcher/"

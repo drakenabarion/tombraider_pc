@@ -1,0 +1,23 @@
+Credits
+=======
+
+Cyber Troopers Virtual-On Masterpiece 1995~2001, native port by drakenabarion.
+
+Lineage: bbport (Bloodborne, deadinside28, github.com/deadinside28/bloodborne_pc)
+-> uncharted_pc (Uncharted: The Nathan Drake Collection, SuperMedo, github.com/Supermedo/uncharted_pc)
+-> this port. The renderer is shadPS4's video core (github.com/shadps4-emu/shadPS4).
+Video decoding (Videodec2) and the DLSS bridge come from IFreemz/shadPS4-Bloodborne-DLSS-FSR.
+
+Also used:
+- NGS2 sound: the NGS2 implementation of AnyPS5 (github.com/boykopovar/AnyPS5, GPL-2.0)
+- ATRAC9 decoding: LibAtrac9 (github.com/Thealexbarney/LibAtrac9)
+- FSR-Vulkan (github.com/FireBurn/FSR-Vulkan) and the AMD FidelityFX SDK; FSR 4 assets from
+  FireBurn/Q2RTX
+- NVIDIA DLSS SDK (Linux builds made with it; NVIDIA's libraries under NVIDIA's license)
+- SDL3, FFmpeg, Dear ImGui, sirit, magic_enum, xbyak, Vulkan Memory Allocator, LLVM,
+  PyInstaller, Pillow and the Cinzel font (SIL Open Font License)
+
+License: GNU GPL v2 or later (LICENSE). Third-party components keep their own licenses.
+NVIDIA, GeForce RTX and DLSS are trademarks of NVIDIA Corporation. No official art is included.
+This project is not affiliated with SEGA or Sony Interactive Entertainment.
+Source: github.com/drakenabarion/virtualon_pc
