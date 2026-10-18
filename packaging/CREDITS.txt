@@ -3,7 +3,8 @@ Credits
 
 Cyber Troopers Virtual-On Masterpiece 1995~2001, native port by drakenabarion.
 
-Lineage: bbport (Bloodborne, deadinside28, github.com/deadinside28/bloodborne_pc)
+Lineage: bbport (Bloodborne on Linux, deadinside28, github.com/deadinside28/bloodborne_pc)
+-> its Windows port (SuperMedo, github.com/Supermedo/bloodborne_pc)
 -> uncharted_pc (Uncharted: The Nathan Drake Collection, SuperMedo, github.com/Supermedo/uncharted_pc)
 -> this port. The renderer is shadPS4's video core (github.com/shadps4-emu/shadPS4).
 Video decoding (Videodec2) and the DLSS bridge come from IFreemz/shadPS4-Bloodborne-DLSS-FSR.

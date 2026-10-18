@@ -6,7 +6,8 @@ The original PS4 game code runs directly on the PC and the graphics are translat
 It is not an emulator: there is no CPU emulation, and the PS4 system libraries are replaced by a
 small native runtime.
 
-**Lineage:** [bbport](https://github.com/deadinside28/bloodborne_pc) (Bloodborne, deadinside28)
+**Lineage:** [bbport](https://github.com/deadinside28/bloodborne_pc) (Bloodborne on Linux, deadinside28)
+→ [its Windows port](https://github.com/Supermedo/bloodborne_pc) (SuperMedo)
 → [uncharted_pc](https://github.com/Supermedo/uncharted_pc) (Uncharted collection, SuperMedo)
 → this port. The renderer is [shadPS4](https://github.com/shadps4-emu/shadPS4)'s video core.
 The git history carries all three. Naming throughout reflects that lineage: bbport's names
@@ -102,7 +103,8 @@ Tangram) or `force` (Force). Saves and caches go to `user/` unless `BB_USER_DIR`
 
 Built on the [Uncharted: The Nathan Drake Collection PC port](https://github.com/Supermedo/uncharted_pc)
 by SuperMedo, which is built on [bbport](https://github.com/deadinside28/bloodborne_pc), the
-native Linux port of Bloodborne by deadinside28, and on the
+native Linux port of Bloodborne by deadinside28, and SuperMedo's
+[Windows port of it](https://github.com/Supermedo/bloodborne_pc), with the
 [shadPS4](https://github.com/shadps4-emu/shadPS4) renderer. Video decoding (Videodec2) and the
 DLSS bridge come from
 [IFreemz/shadPS4-Bloodborne-DLSS-FSR](https://github.com/IFreemz/shadPS4-Bloodborne-DLSS-FSR).
