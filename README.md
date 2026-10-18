@@ -9,8 +9,10 @@ small native runtime.
 **Lineage:** [bbport](https://github.com/deadinside28/bloodborne_pc) (Bloodborne, deadinside28)
 → [uncharted_pc](https://github.com/Supermedo/uncharted_pc) (Uncharted collection, SuperMedo)
 → this port. The renderer is [shadPS4](https://github.com/shadps4-emu/shadPS4)'s video core.
-The git history carries all three, and the code still uses bbport's names (`BB_*` settings,
-`bbport_*` files) so fixes can move between the projects.
+The git history carries all three. Naming throughout reflects that lineage: bbport's names
+(`BB_*` settings, `bbport_*` files) are kept so fixes can move between the projects, and some
+file names, comments, tools and parts of the in-game overlay still carry Bloodborne or
+Uncharted names.
 
 > **No game files are included.** You need your own decrypted dump of the game (the folder
 > with `eboot.bin`, `pjv3.elf`, `sce_module`, `sce_sys` and the game data). Plain decrypted

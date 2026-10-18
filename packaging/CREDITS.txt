@@ -7,6 +7,8 @@ Lineage: bbport (Bloodborne, deadinside28, github.com/deadinside28/bloodborne_pc
 -> uncharted_pc (Uncharted: The Nathan Drake Collection, SuperMedo, github.com/Supermedo/uncharted_pc)
 -> this port. The renderer is shadPS4's video core (github.com/shadps4-emu/shadPS4).
 Video decoding (Videodec2) and the DLSS bridge come from IFreemz/shadPS4-Bloodborne-DLSS-FSR.
+Some names in the port (files, settings, parts of the in-game overlay) still come from the
+Bloodborne and Uncharted ports it is built on.
 
 Also used:
 - NGS2 sound: the NGS2 implementation of AnyPS5 (github.com/boykopovar/AnyPS5, GPL-2.0)
