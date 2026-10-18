@@ -75,6 +75,7 @@ void runtime_thread_keys_cleanup(void);
 void runtime_set_guest_fpu(void);
 /* Guest-visible errno values are FreeBSD's. */
 int32_t runtime_guest_errno(int host_errno);
+void runtime_sleep_ns(uint64_t ns);
 void *runtime_low_map(size_t size, int prot);
 void *runtime_image_map(size_t size, int prot);
 /* Windows: reserves the PS4 user address range as a placeholder (no-op elsewhere). */

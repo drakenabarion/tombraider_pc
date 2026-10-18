@@ -415,6 +415,7 @@ static ABI int32_t posix_attr_set_param(ThreadAttr **a,const int *p) { return po
 static ABI int32_t posix_create(GuestThread **t,ThreadAttr **a,GuestEntry e,void *arg) { return posix(create(t,a,e,arg,"posix")); }
 static ABI int32_t posix_create_name(GuestThread **t,ThreadAttr **a,GuestEntry e,void *arg,const char *name) { return posix(create(t,a,e,arg,name)); }
 static ABI int32_t posix_join(GuestThread *t,void **r) { return posix(thread_join(t,r)); }
+static ABI int32_t posix_detach(GuestThread *t) { return posix(thread_detach(t)); }
 
 /* Co-op: guest threads started by host libraries (NP matching/signaling threads call the
  * game's callbacks). Both return 0 or a positive errno value. */
@@ -451,6 +452,7 @@ uintptr_t runtime_thread_resolve(const char *name) {
         {"E+tyo3lp5Lw#I#J",posix_attr_set_detach}, {"2Q0z6rnBrTE#I#J",posix_attr_set_stack},
         {"euKRgm0Vn2M#I#J",posix_attr_set_param}, {"OxhIB8LB-PQ#I#J",posix_create},
         {"Jmi+9w9u0E4#I#J",posix_create_name}, {"h9CcP3J0oVM#I#J",posix_join},
+        {"+U1R4WtXvoc#I#J",posix_detach},
         {"FJrT5LuUBAU#I#J",thread_exit},
     };
     for (size_t i=0;i<sizeof(table)/sizeof(*table);++i)

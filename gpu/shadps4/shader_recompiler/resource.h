@@ -14,7 +14,9 @@ namespace Shader {
 static constexpr u32 NUM_USER_DATA_REGS = 16;
 static constexpr u32 NUM_IMAGES = 64;
 static constexpr u32 NUM_BUFFERS = 40;
-static constexpr u32 NUM_SAMPLERS = 16;
+// bbport: 32 (Tomb Raider DE has pixel shaders with more than 16 samplers). Pipelines past the
+// device's push-descriptor limit already use regular descriptor sets.
+static constexpr u32 NUM_SAMPLERS = 32;
 static constexpr u32 NUM_FMASKS = 8;
 
 using SharpLocation = u16;

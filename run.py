@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Prepares an Uncharted executable of the Nathan Drake Collection and starts bb-probe.exe.
+"""Prepares the Tomb Raider: Definitive Edition executable and starts bb-probe.
 
-BB_GAME_DIR   the game folder (CUSA02343, CUSA02320, ...; the one with eboot.bin)
-BB_EXE        u1 / u2 / u3 or an executable name (default u1: eboot.bin, the collection menu)
+BB_GAME_DIR   the game folder (CUSA00109 with the 1.01 update copied over it; the one with eboot.bin)
+BB_EXE        game (eboot.bin, the default) or an executable name
 BB_USER_DIR   saves and shader caches (default user/ beside this script)
-Extra arguments go to bb-probe. When the game starts another executable of the collection
+Extra arguments go to bb-probe. When the game starts another executable
 (sceSystemServiceLoadExec), that one is prepared and started in its place.
 The in-game "Apply and restart" runs this script again through BB_RESTART_COMMAND;
 `--after PID` waits for the previous game process to end first (its GPU device and memory).
@@ -17,10 +17,9 @@ import subprocess
 import sys
 
 PORT = Path(__file__).resolve().parent
-# Virtual-On Masterpiece (CUSA16156): pjv3.elf runs all three games, chosen by the selector the
-# collection menu passes twice (argv = {sel, sel}); eboot.bin is the collection menu itself.
-EXECUTABLES = {'omg': 'pjv3.elf', 'ot': 'pjv3.elf', 'force': 'pjv3.elf', 'menu': 'eboot.bin'}
-SELECTORS = {'omg': '-bOMG', 'ot': '-bOT', 'force': '-bFORCE'}
+# Tomb Raider: Definitive Edition (CUSA00109, 1.01): one executable, eboot.bin.
+EXECUTABLES = {'game': 'eboot.bin'}
+SELECTORS = {}
 LOADEXEC_EXIT = 101  # runtime_services.c: the game asked for another executable
 
 
@@ -73,7 +72,7 @@ def find_executable(name):
 
 
 def executable_name(value):
-    return EXECUTABLES.get(value.lower(), value) if value else EXECUTABLES['omg']
+    return EXECUTABLES.get(value.lower(), value) if value else EXECUTABLES['game']
 
 
 def prepare(game, exe, out):
@@ -123,7 +122,7 @@ def main():
     game = Path(env['BB_GAME_DIR'])
     if not (game / 'eboot.bin').is_file():
         fail(f'No eboot.bin in {game}.')
-    choice = env.get('BB_EXE', '') or 'omg'
+    choice = env.get('BB_EXE', '') or 'game'
     exe = executable_name(choice)
     # The game selector, as the collection menu passes it (unless BB_GUEST_ARGS says otherwise).
     if choice.lower() in SELECTORS and not env.get('BB_GUEST_ARGS'):

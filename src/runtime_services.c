@@ -228,6 +228,22 @@ static int32_t dialog_term(int i) {
     static ABI int32_t tag##_status(void) { return dialog_status(i); } \
     static ABI int32_t tag##_term(void) { return dialog_term(i); }
 DIALOG(msg,1) DIALOG(profile,3) DIALOG(commerce,4)
+/* InvitationDialog (index 7): Terminate already exists below (Virtual-On). */
+static ABI int32_t invitation_init(void) { return dialog_init(7); }
+static ABI int32_t invitation_open(const void *p) { (void)p; return dialog_open(7); }
+static ABI int32_t invitation_status(void) { return dialog_status(7); }
+static ABI int32_t invitation_close(void) { dialogs[7].status=3; return 0; }
+static ABI int32_t profile_close(void) { dialogs[3].status=3; return 0; }
+/* Progress bars: nothing is displayed; the game closes the dialog when it is done. */
+static ABI int32_t msg_progress_msg(int32_t target,const char *text) { (void)target; (void)text; return 0; }
+static ABI int32_t msg_progress_value(int32_t target,uint32_t rate) { (void)target; (void)rate; return 0; }
+/* System name and similar strings. */
+static ABI int32_t system_param_string(int32_t id,char *buffer,uint64_t size) {
+    (void)id;
+    if (!buffer || !size) return (int32_t)0x80A10003;
+    snprintf(buffer,size,"%s","PS4");
+    return 0;
+}
 /* SaveDataDialog. Dialogs that only wait (progress bar, a message without buttons, the
  * "progress" system message) stay running until the game closes them, as on the console;
  * the others are answered OK/Yes when the game next asks for the status.
@@ -463,6 +479,13 @@ static ABI int32_t playgo_locus(int32_t handle,const uint16_t *ids,uint32_t coun
     }
     return 0;
 }
+static ABI int32_t playgo_close(int32_t handle) {
+    if (handle!=playgo_handle || !handle) return PLAYGO_BAD_HANDLE;
+    playgo_handle=0; return 0;
+}
+static ABI int32_t playgo_set_todo(int32_t handle,const void *list,uint32_t count) {
+    (void)list; (void)count; return handle==playgo_handle && handle ? 0 : PLAYGO_BAD_HANDLE;
+}
 static ABI int32_t playgo_speed(int32_t handle,int32_t speed) { (void)speed; return handle==playgo_handle && handle ? 0 : PLAYGO_BAD_HANDLE; }
 static int playgo_check(int32_t handle) { return handle==playgo_handle && handle; }
 static ABI int32_t playgo_get_speed(int32_t handle,int32_t *speed) {
@@ -637,6 +660,10 @@ static const RuntimeExport exports[]={
     {"sceCommonDialogInitialize",common_init},
     {"sceMsgDialogInitialize",msg_init}, {"sceMsgDialogOpen",msg_open},
     {"sceMsgDialogUpdateStatus",msg_status}, {"sceMsgDialogTerminate",msg_term},
+    {"sceMsgDialogProgressBarSetMsg",msg_progress_msg}, {"sceMsgDialogProgressBarSetValue",msg_progress_value},
+    {"sceInvitationDialogInitialize",invitation_init}, {"sceInvitationDialogOpen",invitation_open},
+    {"sceInvitationDialogUpdateStatus",invitation_status}, {"sceInvitationDialogClose",invitation_close},
+    {"sceNpProfileDialogClose",profile_close}, {"sceSystemServiceParamGetString",system_param_string},
     {"sceSaveDataDialogInitialize",save_init}, {"sceSaveDataDialogOpen",save_open},
     {"sceSaveDataDialogUpdateStatus",save_status}, {"sceSaveDataDialogTerminate",save_term},
     {"sceNpProfileDialogInitialize",profile_init}, {"sceNpProfileDialogOpen",profile_open},
@@ -649,7 +676,8 @@ static const RuntimeExport exports[]={
     {"sceNpTrophyCreateContext",trophy_context}, {"sceNpTrophyCreateHandle",trophy_handle},
     {"sceNpTrophyRegisterContext",trophy_register}, {"sceNpTrophyUnlockTrophy",trophy_unlock},
     {"sceNpTrophyGetGameInfo",trophy_game_info}, {"sceNpTrophyGetTrophyInfo",trophy_info},
-    {"scePlayGoInitialize",playgo_init}, {"scePlayGoOpen",playgo_open}, {"scePlayGoGetChunkId",playgo_chunk_ids},
+    {"scePlayGoInitialize",playgo_init}, {"scePlayGoOpen",playgo_open}, {"scePlayGoClose",playgo_close},
+    {"scePlayGoSetToDoList",playgo_set_todo}, {"scePlayGoGetChunkId",playgo_chunk_ids},
     {"scePlayGoGetLocus",playgo_locus}, {"scePlayGoSetInstallSpeed",playgo_speed},
     {"scePlayGoGetInstallSpeed",playgo_get_speed}, {"scePlayGoGetEta",playgo_eta},
     {"scePlayGoGetProgress",playgo_progress}, {"scePlayGoGetToDoList",playgo_todo},

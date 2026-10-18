@@ -1,6 +1,7 @@
 /* Imports the Uncharted runtime never needed: Virtual-On Masterpiece (CUSA16156) and its newer
- * libc.prx. Offline behaviour throughout: no USB devices, no RUDP peers, dialogs that close at
- * once, no screenshots. Return values follow shadPS4's implementations where it has them. */
+ * libc.prx, then Tomb Raider: Definitive Edition (CUSA00109). Offline behaviour throughout: no
+ * USB devices, no RUDP peers, no sockets, no PlayStation Camera, not broadcasting, dialogs that
+ * close at once, no screenshots. Return values follow shadPS4's implementations where it has them. */
 #include "runtime.h"
 #include <stdint.h>
 #include <stdio.h>
@@ -12,6 +13,7 @@
 #define USBD_NOT_FOUND ((int32_t)0x80240005)
 #define RUDP_NOT_CONNECTED ((int32_t)0x80770001)
 #define APP_CONTENT_NO_ENTITLEMENT ((int32_t)0x80D90007)
+#define CAMERA_NOT_CONNECTED ((int32_t)0x802E0010)
 
 static void once(const char *what) {
     /* First call only: these paths are expected to stay quiet, so a call is worth noting. */
@@ -162,7 +164,79 @@ static const RuntimeExport exports[] = {
     {"sceRudpInitiate", rudp_not_connected}, {"sceRudpRead", rudp_io}, {"sceRudpWrite", rudp_io},
 };
 
+/* ---- Tomb Raider: Definitive Edition -------------------------------------------------------- */
+static ABI int32_t ime_panel_size(const void *param, uint32_t *w, uint32_t *h) {
+    (void)param;
+    if (w) *w = 0;
+    if (h) *h = 0;
+    return 0;
+}
+static ABI int32_t audio_mix_level_pad_speaker(int32_t handle, int32_t level) { (void)handle; (void)level; return 0; }
+/* Unwinding through a signal frame or a saved context: only reached by C++ exceptions or
+ * signal handlers, which the port does not deliver yet. */
+static ABI int32_t context_unsupported(void) { NOTE("sigreturn/__Ux86_64_setcontext called"); return -1; }
+
+/* BSD sockets (debug and telemetry connections): no network. FreeBSD errno values. */
+typedef struct { int64_t sec, usec; } GuestTimeval;
+static ABI int32_t socket_none(int32_t domain, int32_t type, int32_t protocol) {
+    (void)domain; (void)type; (void)protocol;
+    NOTE("socket: no network");
+    *runtime_errno() = 47; /* EAFNOSUPPORT */
+    return -1;
+}
+static ABI int64_t socket_bad(void) { *runtime_errno() = 9; return -1; } /* EBADF: no socket exists */
+/* select() with no descriptors is also used as a sleep. */
+static ABI int32_t socket_select(int32_t n, void *r, void *w, void *e, const GuestTimeval *timeout) {
+    (void)n; (void)r; (void)w; (void)e;
+    if (timeout && timeout->sec >= 0 && timeout->usec >= 0)
+        runtime_sleep_ns((uint64_t)timeout->sec * 1000000000 + (uint64_t)timeout->usec * 1000);
+    return 0;
+}
+
+/* Live streaming and social feedback: not broadcasting. */
+static ABI int32_t streaming_status(void *status) { if (status) memset(status, 0, 72); return 0; }
+static ABI int32_t streaming_feedback_count(uint32_t *count) { if (count) *count = 0; return 0; }
+static ABI int32_t streaming_feedback(void *messages, uint32_t max, uint32_t *count) {
+    (void)messages; (void)max;
+    if (count) *count = 0;
+    return 0;
+}
+
+/* PlayStation Camera, depth and light-bar tracking: no camera attached. */
+static ABI int32_t camera_attached(int32_t index) { (void)index; return 0; }
+static ABI int32_t camera_none(void) { NOTE("PlayStation Camera: none attached"); return CAMERA_NOT_CONNECTED; }
+static ABI int32_t depth_none(void) { NOTE("libSceDepth: no camera"); return CAMERA_NOT_CONNECTED; }
+static ABI int32_t pad_tracker_memory(uint32_t *size) { if (size) *size = 4096; return 0; }
+static ABI int32_t pad_tracker_none(void) { NOTE("libScePadTracker: no camera, nothing tracked"); return CAMERA_NOT_CONNECTED; }
+
+static const RuntimeExport tomb_raider_exports[] = {
+    {"sceImeDialogGetPanelSize", ime_panel_size}, {"sceAudioOutSetMixLevelPadSpk", audio_mix_level_pad_speaker},
+    {"sceScreenShotSetParam", ok},
+    {"sigreturn", context_unsupported}, {"__Ux86_64_setcontext", context_unsupported},
+    {"socket", socket_none}, {"bind", socket_bad}, {"connect", socket_bad}, {"listen", socket_bad},
+    {"accept", socket_bad}, {"recv", socket_bad}, {"recvfrom", socket_bad}, {"send", socket_bad},
+    {"sendto", socket_bad}, {"shutdown", socket_bad}, {"setsockopt", socket_bad}, {"getsockopt", socket_bad},
+    {"getsockname", socket_bad}, {"select", socket_select},
+    {"sceGameLiveStreamingInitialize", ok}, {"sceGameLiveStreamingTerminate", ok},
+    {"sceGameLiveStreamingSetMaxBitrate", ok}, {"sceGameLiveStreamingPermitLiveStreaming", ok},
+    {"sceGameLiveStreamingEnableLiveStreaming", ok}, {"sceGameLiveStreamingPermitServerSideRecording", ok},
+    {"sceGameLiveStreamingEnableSocialFeedback", ok}, {"sceGameLiveStreamingSetPresetSocialFeedbackCommands", ok},
+    {"sceGameLiveStreamingSetSpoilerTag", ok}, {"sceGameLiveStreamingGetCurrentStatus", streaming_status},
+    {"sceGameLiveStreamingGetSocialFeedbackMessagesCount", streaming_feedback_count},
+    {"sceGameLiveStreamingGetSocialFeedbackMessages", streaming_feedback},
+    {"sceCameraIsAttached", camera_attached}, {"sceCameraOpen", camera_none}, {"sceCameraSetConfig", camera_none},
+    {"sceCameraClose", camera_none}, {"sceCameraStop", camera_none}, {"sceCameraGetFrameData", camera_none},
+    {"sceDepthQueryMemory", depth_none}, {"sceDepthInitialize", depth_none}, {"sceDepthTerminate", ok},
+    {"sceDepthHasCalibrationData", depth_none}, {"sceDepthLoadCalibrationData", depth_none},
+    {"sceDepthUpdate", depth_none}, {"sceDepthHeadCandidateTrackerGetResult", depth_none},
+    {"sceDepthHeadCandidateTrackerSetValidationInformation", depth_none},
+    {"scePadTrackerGetWorkingMemorySize", pad_tracker_memory}, {"scePadTrackerInit", ok},
+    {"scePadTrackerTerm", ok}, {"scePadTrackerCalibrate", ok}, {"scePadTrackerUpdate", ok},
+    {"scePadTrackerReadState", pad_tracker_none},
+};
+
 uintptr_t runtime_extra_resolve(const char *name) {
     if (!strcmp(name, "fJgP+wqifno#libSceDiscMap")) return (uintptr_t)disc_map_query;
-    return RUNTIME_LOOKUP(exports, name);
+    uintptr_t found = RUNTIME_LOOKUP(exports, name);
+    return found ? found : RUNTIME_LOOKUP(tomb_raider_exports, name);
 }

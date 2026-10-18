@@ -182,7 +182,11 @@ def link(game, out, module_names=DEFAULT_MODULES, exe='eboot.bin'):
                 relocs.append((target, 0, base + addend, 0))
             elif kind == 16:
                 symbol = m['symbols'][symid]
-                if symbol['name'] or symbol['type'] != 3 or addend or not module_id:
+                # The module's own TLS block: through its section symbol, or (older libc.prx, e.g.
+                # Tomb Raider's 2014 one) through a named TLS variable it defines itself; the
+                # linker has already written the variable's offset into the slot's second word.
+                local = symbol['type'] == 3 and not symbol['name'] or symbol['type'] == 6 and symbol['section']
+                if not local or addend or not module_id:
                     raise ValueError(f'{filename}: unsupported external TLS relocation')
                 struct.pack_into('<Q', image, target, module_id)
                 tls_relocations += 1

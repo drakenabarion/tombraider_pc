@@ -1,4 +1,4 @@
-"""List the PS4 imports of each Virtual-On executable that the runtime does not provide yet.
+"""List the PS4 imports of the Tomb Raider executable that the runtime does not provide yet.
 
 Prepares and links every executable into out/missing/<name>, asks bb-probe --list-missing
 for imports the C runtime leaves unresolved, and drops those the GPU/network library
@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 PORT = Path(__file__).resolve().parent.parent
-EXECUTABLES = ('pjv3.elf', 'eboot.bin')
+EXECUTABLES = ('eboot.bin',)
 GPU_FILES = ['shadps4/core/libraries/gnmdriver/gnmdriver.cpp', 'shadps4/core/libraries/videoout/video_out.cpp',
              'shadps4/core/libraries/kernel/equeue.cpp', 'shadps4/core/libraries/avplayer/*.cpp',
              'shadps4/core/libraries/network/**/*.cpp', 'shadps4/core/libraries/np/**/*.cpp', 'shim/**/*.cpp']

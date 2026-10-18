@@ -657,7 +657,29 @@ static ABI int32_t batch_map2(BatchEntry *entries, int count, int *processed, in
 static ABI int32_t batch_map(BatchEntry *entries, int count, int *processed) {
     return batch_map2(entries,count,processed,MAP_FIXED_FLAG);
 }
+/* POSIX mmap (Tomb Raider): anonymous memory is flexible memory, MAP_VOID a reserved range.
+ * File mappings are not supported. MAP_FAILED with errno on failure, as FreeBSD. */
+#define POSIX_MAP_VOID 0x100
+#define POSIX_MAP_ANON 0x1000
+static ABI void *posix_mmap(void *address, uint64_t length, int prot, int flags, int fd, int64_t offset) {
+    void *where=address;
+    uint64_t size=align_up(length,PAGE);
+    int32_t result;
+    (void)offset;
+    if (!length) { *runtime_errno()=22; return (void *)-1; }
+    if (flags & POSIX_MAP_VOID) result=reserve_range(&where,size,flags & MAP_FIXED_FLAG,0);
+    else if ((flags & POSIX_MAP_ANON) || fd==-1) result=map_flexible(&where,size,prot & 7,flags & MAP_FIXED_FLAG);
+    else {
+        fprintf(stderr,"Runtime: mmap of file descriptor %d is not supported\n",fd);
+        *runtime_errno()=19; /* ENODEV */
+        return (void *)-1;
+    }
+    if (result) { *runtime_errno()=12; return (void *)-1; } /* ENOMEM */
+    return where;
+}
+static ABI int32_t posix_msync(void *address, uint64_t length, int flags) { (void)address; (void)length; (void)flags; return 0; }
 static const RuntimeExport exports[]={
+    {"mmap",posix_mmap}, {"msync",posix_msync},
     {"sceKernelGetDirectMemorySize",direct_size}, {"sceKernelAllocateDirectMemory",direct_allocate},
     {"sceKernelMapDirectMemory",direct_map}, {"sceKernelMapNamedDirectMemory",direct_map_named},
     {"sceKernelReleaseDirectMemory",direct_release}, {"sceKernelMunmap",direct_unmap}, {"munmap",direct_unmap},
