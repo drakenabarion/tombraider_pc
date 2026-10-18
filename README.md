@@ -1,6 +1,6 @@
-# Virtual-On Masterpiece for Linux
+# Virtual-On Masterpiece for Linux and Windows
 
-**Cyber Troopers Virtual-On Masterpiece 1995~2001 (PS4, CUSA16156) running natively on Linux.**
+**Cyber Troopers Virtual-On Masterpiece 1995~2001 (PS4, CUSA16156) running natively on Linux and Windows.**
 
 The original PS4 game code runs directly on the PC and the graphics are translated to Vulkan.
 It is not an emulator: there is no CPU emulation, and the PS4 system libraries are replaced by a
@@ -28,14 +28,15 @@ Work in progress.
   **Virtual-On Force** (`force`): boot, menus and matches play and render correctly.
 - **The collection menu** (`eboot.bin`, `BB_EXE=menu`): boots through the logos and title video to
   the menu and starts each game, with its sound through NGS2.
-- Audio: the games, the collection menu and its videos play their sound (PipeWire).
+- Audio: the games, the collection menu and its videos play their sound (PipeWire on Linux).
 - Online play is not available: network and RUDP calls report offline.
 
 ## Requirements
 
-- Linux, x86-64, with a recent glibc (the builds so far use 2.43).
+- Linux, x86-64, with a recent glibc (the builds so far use 2.43), or Windows 10 (1903 or
+  later) or Windows 11, 64-bit.
 - A GPU with Vulkan 1.3 and a current driver. Developed on an NVIDIA GeForce RTX 5080.
-- About 8 GB of free memory.
+- About 8 GB of free memory (on Windows, RAM + page file).
 
 ## Building
 
@@ -48,9 +49,20 @@ Vulkan and SDL3, FFmpeg, protobuf, OpenSSL, zlib and miniupnpc). With `DLSS_SDK_
 checkout of the [NVIDIA DLSS SDK](https://github.com/NVIDIA/DLSS), it also builds the optional
 DLSS bridge.
 
+On Windows the same `build.sh` runs in the MSYS2 CLANG64 shell and builds `out/bb-probe.exe`;
+`packaging/windows/package.sh` then makes `dist/virtualon-windows.zip` with `Virtual-On.exe`.
+The packages to install and the differences from Linux are in
+[packaging/windows/README.md](packaging/windows/README.md). `packaging/windows/build-windows.bat`
+does the whole build from a kit folder (MSYS2 and Python installers, `BuildEnv`, `Game`), found
+beside the repository or through `VO_KIT`; `repackage.bat` reruns only the packaging.
+
 ## Running
 
-The launcher (needs python3 with tkinter and Pillow):
+Release builds are on the Releases page: `Virtual-On-x86_64.AppImage` for Linux (make it
+executable and start it) and `virtualon-windows.zip` for Windows (extract it and start
+`Virtual-On.exe`; `README.txt` inside explains the rest).
+
+From the source tree, the launcher (needs python3 with tkinter and Pillow):
 
 ```
 python3 launcher/virtualon_launcher.py
