@@ -280,6 +280,8 @@ static void fault(int sig, siginfo_t *info, void *context) {
     _exit(128 + sig);
 }
 #endif
+/* Size of the loaded guest image (also used by the Windows build). */
+static uint64_t guest_image_size;
 #ifndef _WIN32
 /* Watchdog: dump RIP and the rbp frame chain of every thread (guest offsets
  * when inside the image). Reads use process_vm_readv so bad frames cannot fault. */
@@ -306,7 +308,6 @@ static void dump_frames(ucontext_t *uc) {
         rbp=frame[0]; rip=frame[1];
     }
 }
-static uint64_t guest_image_size;
 /* The rbp chain stops in host code built without frame pointers: also list guest code
  * addresses found on the stack (return address candidates, innermost first). */
 static void scan_stack(ucontext_t *uc) {

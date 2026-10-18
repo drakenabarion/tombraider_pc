@@ -7,11 +7,19 @@
 #include <pthread.h>
 #include <errno.h>
 #include <time.h>
+#ifdef _WIN32
+__declspec(dllimport) unsigned long __stdcall GetCurrentThreadId(void);
+#else
 #include <unistd.h>
 #include <sys/syscall.h>
+#endif
 static __thread int cached_tid;
 static int host_tid(void) {
+#ifdef _WIN32
+    if (!cached_tid) cached_tid = (int)GetCurrentThreadId();
+#else
     if (!cached_tid) cached_tid = (int)syscall(SYS_gettid);
+#endif
     return cached_tid;
 }
 typedef struct { int type; } GuestAttr;

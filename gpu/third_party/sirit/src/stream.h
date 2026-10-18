@@ -11,6 +11,7 @@
 #include <cassert>
 #include <concepts>
 #include <cstddef>
+#include <cstdlib> // std::abort: libc++ (MSYS2 CLANG64) does not include it transitively
 #include <functional>
 #include <string_view>
 #include <unordered_map>

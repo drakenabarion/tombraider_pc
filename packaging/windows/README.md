@@ -1,7 +1,7 @@
-# bbport on Windows
+# Virtual-On port on Windows
 
 The port builds and runs natively on 64-bit Windows 10 (1903+) / 11 with the same sources as
-on Linux. Players: see `README-Windows.txt` (it ships in the package).
+on Linux. Players: see `README-Virtual-On.txt` (it ships in the package).
 
 ## Build
 
@@ -24,17 +24,16 @@ Then, in the repository:
 ```bash
 git submodule update --init --recursive
 bash build.sh                      # out/bb-probe.exe, out/bb-gpu-capabilities.exe
-BB_GAME_DIR=F:/path/to/CUSA03173 python run.py
-python launcher/bbport_launcher_win.py
-bash packaging/windows/package.sh  # dist/bbport-windows/ and .zip: Bloodborne.exe + DLLs
+python launcher/virtualon_launcher.py   # or: BB_GAME_DIR=F:/path/to/CUSA16156 python run.py
+bash packaging/windows/package.sh  # dist/virtualon-windows/ and .zip: Virtual-On.exe + DLLs
 ```
 
 `run.py` is the Windows `run.sh` (same variables; works from a plain Windows Python too).
 The package freezes the launcher with PyInstaller (a private venv in `out/pyenv`, from a
-python.org Python) into `Bloodborne.exe`, which also runs `run.py` (`--run`), the preparation
+python.org Python) into `Virtual-On.exe`, which also runs `run.py` (`--run`), the preparation
 scripts (`--script`) and the game without the window (`--play`): players need no Python.
-`Play Bloodborne.exe` (`packaging/windows/play.c`) is a small native program that runs
-`Bloodborne.exe --play` from its folder and waits for it, for players who want to start the
+`Play Virtual-On.exe` (`packaging/windows/play.c`) is a small native program that runs
+`Virtual-On.exe --play` from its folder and waits for it, for players who want to start the
 game directly with the saved settings.
 `patches.py` applies the 1.09 patches only to a 1.09 game (`BB_FORCE_PATCHES=1` overrides);
 `run.py` then runs other versions at 30 FPS with live resolution changes.
@@ -51,7 +50,7 @@ FSR 3 (scene color, depth, render-pixel motion vectors, jitter). `BB_DLSS=0` tur
 The launcher texts are written in English with the Russian beside them; the other languages
 are in `launcher/bbport_lang.py` (one list per language in the order of `KEYS`; a missing or
 empty text falls back to English). The icon (`launcher/bloodborne.ico`/`.png`) is drawn by
-`packaging/windows/make_icon.py` and built into `Bloodborne.exe`, `bb-probe.exe` (the game
+`packaging/windows/make_icon.py` and built into `Virtual-On.exe`, `bb-probe.exe` (the game
 window) and `bb-gpu-capabilities.exe`.
 
 ## What is different from Linux

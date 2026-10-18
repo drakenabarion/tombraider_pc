@@ -1,0 +1,44 @@
+From: bbport
+Subject: [PATCH] FFX 1.1.4 host sources: portability header for MinGW (MSYS2 CLANG64)
+
+---
+--- a/CMakeLists.txt	2026-10-18 03:21:45.888430691 +0000
++++ b/CMakeLists.txt	2026-10-18 03:21:45.942414391 +0000
+@@ -231,7 +231,7 @@
+             "${FFX_1_1_4_ROOT}/src/shared"
+             "${FFX_1_1_4_ROOT}/src/components"
+     )
+-    if(NOT WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
++    if(NOT MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+         target_compile_options(ffx_vulkan_fsr3_host_1_1_4 PRIVATE
+             -include "${CMAKE_CURRENT_SOURCE_DIR}/src/ffx_1_1_4_portability.hpp"
+         )
+@@ -281,7 +281,7 @@
+     target_link_libraries(ffx_vulkan_fsr3_vk_backend_1_1_4
+         PUBLIC ffx-vulkan::fsr3-host-1.1.4 Vulkan::Vulkan
+     )
+-    if(NOT WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
++    if(NOT MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+         target_compile_options(ffx_vulkan_fsr3_vk_backend_1_1_4 PRIVATE
+             -include "${CMAKE_CURRENT_SOURCE_DIR}/src/ffx_1_1_4_portability.hpp"
+         )
+--- a/src/ffx_1_1_4_portability.hpp	2026-10-18 03:21:45.890241532 +0000
++++ b/src/ffx_1_1_4_portability.hpp	2026-10-18 03:21:45.942545472 +0000
+@@ -9,6 +9,17 @@
+ 
+ #pragma once
+ 
++#if defined(__MINGW32__)
++// MinGW (MSYS2 CLANG64, libc++): the CRT has _countof and the *_s functions, but libc++ does not
++// include these headers transitively the way MSVC's standard library does.
++#include <cmath>
++#include <cstdio>
++#include <cstdlib>
++#include <cwchar>
++#include <mutex>
++#include <new>
++#endif
++
+ #if !defined(_WIN32)
+ 
+ #include <cerrno>
