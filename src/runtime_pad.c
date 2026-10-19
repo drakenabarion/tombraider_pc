@@ -83,8 +83,22 @@ static void touch_click(PadData *d, int right) {
 
 /* Opens the first gamepad SDL knows about; called under lock. */
 static SDL_Gamepad *current_gamepad(void) {
-    if (!sdl_ready) sdl_ready = SDL_WasInit(SDL_INIT_GAMEPAD) ? 1 : SDL_InitSubSystem(SDL_INIT_GAMEPAD) ? 1 : -1;
+    if (!sdl_ready) {
+#ifdef _WIN32
+        /* The gamepad subsystem starts here, on a game thread without a Windows message loop:
+         * Raw Input and Windows.Gaming.Input would never report a device. XInput (Xbox pads) and
+         * HIDAPI (DualShock/DualSense) on SDL's own joystick thread work from any thread. */
+        SDL_SetHint(SDL_HINT_JOYSTICK_THREAD, "1");
+        SDL_SetHint(SDL_HINT_JOYSTICK_RAWINPUT, "0");
+        SDL_SetHint(SDL_HINT_JOYSTICK_WGI, "0");
+        SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+#endif
+        sdl_ready = SDL_WasInit(SDL_INIT_GAMEPAD) ? 1 : SDL_InitSubSystem(SDL_INIT_GAMEPAD) ? 1 : -1;
+    }
     if (sdl_ready<0) return NULL;
+#ifdef _WIN32
+    SDL_UpdateGamepads(); /* new devices and button state, without the window's event loop */
+#endif
     if (gamepad && !SDL_GamepadConnected(gamepad)) { SDL_CloseGamepad(gamepad); gamepad=NULL; }
     if (!gamepad) {
         int count=0;

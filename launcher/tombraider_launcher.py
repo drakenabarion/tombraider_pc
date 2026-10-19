@@ -7,7 +7,7 @@ display and console options, and runs run.py with them as environment variables.
 options live in ~/.config/tombraider-launcher/settings.json.
 
 Frozen with PyInstaller (the AppImage) the same executable also runs the game without the
-window (`--play menu|omg|ot|force`), run.py (`--run`) and the preparation scripts
+window (`--play` or `--play game`), run.py (`--run`) and the preparation scripts
 (`--script`), so a packaged port needs no Python installation.
 
 Based on the launcher of the Uncharted collection port (uncharted_launcher.py).
@@ -71,8 +71,8 @@ LANGUAGES = [('1', 'English (United States)'), ('18', 'English (United Kingdom)'
              ('12', 'Finnish'), ('13', 'Swedish'), ('14', 'Danish'), ('15', 'Norwegian')]
 PRESENT_MODES = [('Mailbox', 'Mailbox (low latency, no tearing)'), ('Fifo', 'FIFO (VSync)'),
                  ('FifoRelaxed', 'FIFO Relaxed'), ('Immediate', 'Immediate (tearing)')]
-# The display rate the games run at (BB_VBLANK_HZ): Virtual-On is paced by the frame (at 120 it
-# runs at double speed), so it is always 60.
+# The display rate (BB_VBLANK_HZ): kept at 60 from the Virtual-On launcher, which counts frames;
+# Tomb Raider runs at 60 too. Revisit when uncapped frame rates are tried.
 FRAME_RATES = [('60', '60 FPS (as on PS4)')]
 # The games render 1920x1080; the window (or the screen in fullscreen) gets that image scaled
 # to its size: FSR 1 (EASU) or bilinear, then RCAS sharpening (BB_RCAS_ATTENUATION, lower
@@ -330,7 +330,7 @@ def game_environment(s, start=None):
     env['BB_RCAS'] = '0' if sharpening == 'off' else '1'
     if sharpening != 'off':
         env['BB_RCAS_ATTENUATION'] = sharpening
-    # Not wired up for Virtual-On (no scene pass or motion vectors yet): off whatever was saved.
+    # Not wired up for Tomb Raider (no scene pass or motion vectors yet): off whatever was saved.
     env['BB_UPSCALER'] = 'off'
     env['BB_FRAME_GEN'] = 'off'
     for item in str(s['extra_env']).split():
@@ -343,11 +343,11 @@ def game_environment(s, start=None):
 
 
 # ---------------------------------------------------------------------------------------------
-# Surfaces: near-black blue base, raised panels, Virtual-On cyan accent (the names are the
-# Uncharted launcher's: GOLD is the accent colour).
+# Surfaces: warm near-black base, raised panels, a gold accent to match the poster (the names
+# are the Uncharted launcher's: GOLD is the accent colour).
 
-BG, PANEL, SURFACE, CARD, LINE = '#07090c', '#0b0d11', '#0e1115', '#161a20', '#252b33'
-TEXT, MUTED, GOLD, GOLD_HI, GOLD_DIM = '#eef3f8', '#86909c', '#5ec8ff', '#9bdcff', '#3f86ad'
+BG, PANEL, SURFACE, CARD, LINE = '#0b0907', '#100d0a', '#14110d', '#1e1913', '#332b22'
+TEXT, MUTED, GOLD, GOLD_HI, GOLD_DIM = '#f5efe6', '#9c9286', '#d9a65c', '#f0c88a', '#8a6a3c'
 CARD_HI = '#202226'
 COLORS = {'surface': SURFACE, 'card': CARD, 'card_hi': CARD_HI, 'line': LINE, 'text': TEXT, 'muted': MUTED,
           'gold': GOLD, 'gold_hi': GOLD_HI, 'track': '#2c2e33', 'knob': '#9a958b', 'knob_on': '#f7f1e2',
@@ -372,7 +372,7 @@ class Launcher:
         self.card_hot = None
         self.info = None
         self.update_box = None
-        root.title(f'{NAME} Masterpiece 1995~2001 for Linux · by {AUTHOR}')
+        root.title(f'{NAME}: Definitive Edition · by {AUTHOR}')
         root.configure(bg=BG)
         self.dpi = root.winfo_fpixels('1i') / 96.0
         root.geometry(f'{self.px(1180)}x{self.px(860)}')
@@ -402,7 +402,7 @@ class Launcher:
             pass
 
     def load_fonts(self):
-        """A bold sans-serif for headings (Virtual-On's square capitals), the UI face for text."""
+        """A bold sans-serif for headings (the brand's capitals), the UI face for text."""
         import tkinter.font as tkfont
         families = set(tkfont.families(self.root))
         pick = lambda names: next((n for n in names if n in families), names[-1])
@@ -649,11 +649,11 @@ class Launcher:
         side.pack(side='left', fill='y')
         side.pack_propagate(False)
         brand_wrap = side_w - 36
-        tk.Label(side, text='VIRTUAL-ON', bg=BG, fg=GOLD, font=self.font_brand_lg, anchor='w').pack(
+        tk.Label(side, text='TOMB RAIDER', bg=BG, fg=GOLD, font=self.font_brand_lg, anchor='w').pack(
             anchor='w', padx=18, pady=(28, 0))
-        tk.Label(side, text='CYBER TROOPERS', bg=BG, fg=MUTED, font=self.font_brand_sm, anchor='w').pack(
+        tk.Label(side, text='DEFINITIVE EDITION', bg=BG, fg=MUTED, font=self.font_brand_sm, anchor='w').pack(
             anchor='w', padx=18, pady=(8, 0))
-        tk.Label(side, text='MASTERPIECE 1995~2001', bg=BG, fg=MUTED, font=self.font_brand_sm, anchor='w').pack(
+        tk.Label(side, text='PS4 NATIVE PORT', bg=BG, fg=MUTED, font=self.font_brand_sm, anchor='w').pack(
             anchor='w', padx=18, pady=(1, 0))
         tk.Label(side, text=_('by {}').format(AUTHOR), bg=BG, fg=TEXT, font=self.font_ui_md,
                  anchor='w', wraplength=brand_wrap, justify='left').pack(anchor='w', padx=18, pady=(10, 0))
@@ -687,7 +687,7 @@ class Launcher:
             self.nav[name], self.nav_pills[name], self.nav_marks[name] = item, pill, mark
         tk.Frame(side, bg=BG).pack(fill='both', expand=True)
         self.side = side
-        self.side_note = tk.Label(side, text=_('Native port: the original PS4 game code runs directly on Linux.'),
+        self.side_note = tk.Label(side, text=_('Native port: the original PS4 game code runs directly on {}.').format('Windows' if WINDOWS else 'Linux'),
                                   bg=BG, fg=MUTED, font=('Segoe UI', 9), justify='left',
                                   wraplength=side_w - 36)
         self.side_note.pack(anchor='w', padx=18, pady=(0, 18))
@@ -961,7 +961,7 @@ class Launcher:
         # The games are paced by the frame (120 FPS runs them at double speed), so the frame rate
         # stays at 60. Temporal anti-aliasing, DLSS and frame generation need the game's scene pass
         # and motion vectors wired up (docs/upscaler.md: done for Bloodborne and Uncharted, not yet
-        # for Virtual-On), so those options are not offered.
+        # for Tomb Raider), so those options are not offered.
         self.section(f, _('Resolution'))
         self.row(f, _('Window size'), self.choice(f, 'window_size', WINDOW_SIZES, 34),
                  _('The games render at 1920 × 1080. A larger window, or fullscreen on a 1440p or 4K '
@@ -1427,7 +1427,7 @@ class Launcher:
         self.messagebox.showinfo(NAME, _('Shader cache cleared. The next start stutters for a while as it is rebuilt.'))
 
     def shortcut(self):
-        """Virtual-On.lnk on the desktop (Windows); on Linux a menu entry (and one on the desktop)."""
+        """Tomb Raider.lnk on the desktop (Windows); on Linux a menu entry (and one on the desktop)."""
         if not WINDOWS:
             return self.linux_shortcut()
         if FROZEN:
@@ -1448,7 +1448,7 @@ class Launcher:
             self.messagebox.showerror(NAME, result.stderr.decode(errors='replace')[:400])
 
     def linux_shortcut(self):
-        """virtual-on.desktop in the applications menu, and on the desktop when there is one. It
+        """tomb-raider.desktop in the applications menu, and on the desktop when there is one. It
         starts the AppImage file when the launcher runs from one (its mount changes every start),
         otherwise this script with the Python running it."""
         appimage = os.environ.get('APPIMAGE')
@@ -1457,7 +1457,7 @@ class Launcher:
         else:
             command = f'"{sys.executable}" "{Path(__file__).resolve()}"'
         data = Path(os.environ.get('XDG_DATA_HOME') or Path.home() / '.local/share')
-        icon = data / 'icons' / 'virtual-on.png'
+        icon = data / 'icons' / 'tomb-raider.png'
         try:
             icon.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(PORT_DIR / 'launcher' / 'tombraider.png', icon)
@@ -1473,7 +1473,7 @@ class Launcher:
                 if folder.name == 'Desktop' and not folder.is_dir():
                     continue
                 folder.mkdir(parents=True, exist_ok=True)
-                path = folder / 'virtual-on.desktop'
+                path = folder / 'tomb-raider.desktop'
                 path.write_text(entry, encoding='utf-8')
                 path.chmod(0o755)
                 written.append(str(path))
@@ -1484,7 +1484,7 @@ class Launcher:
 
     def add_to_steam(self):
         """Each game in the Steam library: non-Steam shortcuts that start this launcher with
-        --play menu, omg, ot or force (no launcher window; the settings saved here apply)."""
+        --play or --play game (no launcher window; the settings saved here apply)."""
         import bbport_steam
         steam = bbport_steam.steam_folder()
         configs = bbport_steam.user_configs(steam) if steam else []
@@ -1680,7 +1680,7 @@ def main():
         shutil.rmtree(UPDATE_DIR, ignore_errors=True)  # what a finished update left behind
     settings = {**APP_DEFAULTS, **load_json(CONFIG_FILE, {})}
     if '--play' in args and (Path(settings['game_dir'] or '.') / 'eboot.bin').is_file():
-        # --play menu|omg|ot|force (one Steam shortcut each); --play alone: the one chosen last.
+        # --play game (the Steam shortcut); --play alone: the same.
         after = args[args.index('--play') + 1:]
         start = after[0] if after and after[0] in {key for key, *_rest in GAMES} else None
         sys.exit(play_without_window(settings, start))

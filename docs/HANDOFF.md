@@ -43,6 +43,14 @@ draws and bindings in `video_core/renderer_vulkan/vk_rasterizer.cpp`, shader tra
 
 ### 1. TressFX hair is silvery (the main open bug)
 
+**Symptom, corrected by the maintainer (October 2026):** the hair is not silvery all the time.
+It flickers and turns silvery **in some conditions, mostly under dynamic lighting**. Read the
+analysis below with that in mind: a fault that depends on the lights and changes from frame to
+frame points at the per-light path of the resolve shader (shadow-map compares on image 2,
+falloff LUTs on images 3-9) or at a binding that resolves differently between frames, not at a
+constant fault. Run the binding trace below in a scene with a dynamic light, over several
+frames (raise `BB_TRACE_COUNT`), and compare what binding 2 resolves to from frame to frame.
+
 TressFX runs as compute passes (simulation), then fill pass 2 (vs `f871bb9d932e79ab`,
 ps `aa7cd3c6214fb035`), which builds a per-pixel linked list (12-byte nodes: tangent, depth, next;
 counter in GDS[0]), then resolve pass 3 (ps `42d601c4e9788311`, low 32 bits `e9788311`), which
@@ -58,7 +66,7 @@ with `BB_DUMP_SHADERS=1` and the cache off): hair base colour is a constant in t
 (0.145, 0.106, 0.071 = brown). Colour = base x per-light diffuse (lights loop with 4-tap
 shadow-map compares on image 2, the 8192x4096 shadow map at `0x1040008000`, and falloff LUTs
 on images 3-9) + a white Kajiya-Kay specular that is NOT shadowed and fades as diffuse brightens.
-The symptom (one flat shade, white highlight changing with the view) fits **diffuse = 0**, so
+The symptom as first described (one flat shade, white highlight changing with the view) fits **diffuse = 0**, so
 the leading suspect is the shadow-map binding: every compare fails, or the binding resolves to
 the wrong image (bbport's scene proxies or upscaler redirects can swap bindings).
 
