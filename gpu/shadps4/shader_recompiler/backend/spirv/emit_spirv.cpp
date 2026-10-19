@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -429,6 +430,21 @@ void DefineEntryPoint(const Info& info, EmitContext& ctx, Id main) {
         }
         if (info.stores.GetAny(IR::Attribute::Depth)) {
             ctx.AddExecutionMode(main, spv::ExecutionMode::DepthReplacing);
+        }
+        // bbport: a shader that writes memory gets the early tests the game set up, so that
+        // fragments failing depth/stencil have no side effects (as on the PS4). Shaders without
+        // memory writes are left alone: drivers test them early already when that is allowed.
+        if (std::ranges::any_of(info.buffers, [](const auto& b) { return b.is_written; }) ||
+            std::ranges::any_of(info.images, [](const auto& i) { return i.is_written; })) {
+            const bool early = ctx.runtime_info.hw.fs.early_fragment_tests && !info.has_discard &&
+                               !info.stores.GetAny(IR::Attribute::Depth);
+            if (early) {
+                ctx.AddExecutionMode(main, spv::ExecutionMode::EarlyFragmentTests);
+            }
+            LOG_WARNING(Render_Recompiler,
+                        "bbport: fs {:#x} writes memory; early tests {} (requested {}, discard {})",
+                        info.pgm_hash, early ? "on" : "off",
+                        ctx.runtime_info.hw.fs.early_fragment_tests, info.has_discard);
         }
         break;
     case SwStage::Geometry:

@@ -1,35 +1,48 @@
-# Virtual-On Masterpiece for Linux and Windows
+# Tomb Raider: Definitive Edition for Linux (work in progress)
 
-**Cyber Troopers Virtual-On Masterpiece 1995~2001 (PS4, CUSA16156) running natively on Linux and Windows.**
+**Tomb Raider: Definitive Edition (PS4, CUSA00109, update 1.01) running natively on Linux.**
 
 The original PS4 game code runs directly on the PC and the graphics are translated to Vulkan.
 It is not an emulator: there is no CPU emulation, and the PS4 system libraries are replaced by a
-small native runtime.
+small native runtime. This is a proof of concept of the approach on a larger, more complex game.
 
 **Lineage:** [bbport](https://github.com/deadinside28/bloodborne_pc) (Bloodborne on Linux, deadinside28)
 → [its Windows port](https://github.com/Supermedo/bloodborne_pc) (SuperMedo)
 → [uncharted_pc](https://github.com/Supermedo/uncharted_pc) (Uncharted collection, SuperMedo)
-→ this port. The renderer is [shadPS4](https://github.com/shadps4-emu/shadPS4)'s video core.
-The git history carries all three. Naming throughout reflects that lineage: bbport's names
-(`BB_*` settings, `bbport_*` files) are kept so fixes can move between the projects, and some
-file names, comments, tools and parts of the in-game overlay still carry Bloodborne or
-Uncharted names.
+→ virtualon_pc (Virtual-On Masterpiece) → this port. The renderer is
+[shadPS4](https://github.com/shadps4-emu/shadPS4)'s video core. Naming throughout reflects that
+lineage: `BB_*` settings and `bbport_*` files are kept, and the packaging, launcher and some
+comments still carry Virtual-On, Uncharted or Bloodborne names.
 
-> **No game files are included.** You need your own decrypted dump of the game (the folder
-> with `eboot.bin`, `pjv3.elf`, `sce_module`, `sce_sys` and the game data). Plain decrypted
-> ELF dumps work as they are; no fake-SELF signing step is needed.
-> This project is not affiliated with SEGA or Sony Interactive Entertainment.
+> **No game files are included.** You need your own decrypted dump of the game: the base game
+> with the 1.01 update copied over it (the folder with `eboot.bin` and `sce_module`).
+> This project is not affiliated with Square Enix, Crystal Dynamics or Sony Interactive
+> Entertainment.
 
 ## Status
 
-Work in progress.
+- Boots, plays the intro videos with sound, and plays through to the first base camp at 60 FPS.
+- There are no binary releases yet; build from source (below) and start with `run.py`.
 
-- **Cyber Troopers Virtual-On** (`omg`), **Virtual-On Oratorio Tangram** (`ot`) and
-  **Virtual-On Force** (`force`): boot, menus and matches play and render correctly.
-- **The collection menu** (`eboot.bin`, `BB_EXE=menu`): boots through the logos and title video to
-  the menu and starts each game, with its sound through NGS2.
-- Audio: the games, the collection menu and its videos play their sound (PipeWire on Linux).
-- Online play is not available: network and RUDP calls report offline.
+## Limitations
+
+Known problems (as of October 2026):
+
+- **TressFX hair looks silvery and flickers.** The whole head of hair takes one flat shade, with a
+  white highlight that changes as Lara moves. Current lead: the hair resolve shader's per-light
+  diffuse term (it uses the 8192x4096 shadow map) seems to come out as zero, leaving only the
+  specular highlight. See `docs/HANDOFF.md`.
+- **Shader compilation stutter.** Each new shader compiles on first use; large parts of the game
+  stutter until compiled. Run with `BB_PIPELINE_CACHE=0` for now (the cache is off while the port
+  is being debugged).
+- **Lighting flicker** in caves where sunlight comes in.
+- **Rain:** a grey distortion line along the top edge of the screen.
+- **Packaging is not adapted yet:** `run.sh`, the launcher, the AppImage and the Windows build
+  scripts are still Virtual-On's and do not work for this game. Use `run.py`.
+- Windows is not built or tested.
+- Online features report offline.
+
+Updates will be slow for a while: the maintainer has a busy few days ahead.
 
 ## Requirements
 
@@ -49,67 +62,36 @@ Vulkan and SDL3, FFmpeg, protobuf, OpenSSL, zlib and miniupnpc). With `DLSS_SDK_
 checkout of the [NVIDIA DLSS SDK](https://github.com/NVIDIA/DLSS), it also builds the optional
 DLSS bridge.
 
-On Windows the same `build.sh` runs in the MSYS2 CLANG64 shell and builds `out/bb-probe.exe`;
-`packaging/windows/package.sh` then makes `dist/virtualon-windows.zip` with `Virtual-On.exe`.
-The packages to install and the differences from Linux are in
-[packaging/windows/README.md](packaging/windows/README.md). `packaging/windows/build-windows.bat`
-does the whole build from a kit folder (MSYS2 and Python installers, `BuildEnv`, `Game`), found
-beside the repository or through `VO_KIT`; `repackage.bat` reruns only the packaging.
+The Windows build path (MSYS2 CLANG64, `packaging/windows/`) is inherited from Virtual-On and
+has not been adapted or tested for this game.
 
 ## Running
 
-Release builds are on the Releases page: `Virtual-On-x86_64.AppImage` for Linux (make it
-executable and start it) and `virtualon-windows.zip` for Windows (extract it and start
-`Virtual-On.exe`; `README.txt` inside explains the rest).
-
-From the source tree, the launcher (needs python3 with tkinter and Pillow):
+From the source tree:
 
 ```
-python3 launcher/virtualon_launcher.py
+BB_GAME_DIR=/path/to/CUSA00109 BB_PIPELINE_CACHE=0 python3 run.py
 ```
 
-Set the game folder on the Game page, pick the collection menu or one of the games, and press
-Play. **Add to Steam** adds each of the four as a non-Steam shortcut (leave Proton off), and
-**Desktop shortcut** puts the launcher in the applications menu. `packaging/appimage-linux.sh`
-packs the launcher and the port into `dist/Virtual-On-x86_64.AppImage`.
+`BB_GAME_DIR` is the base game with the 1.01 update copied over it. Saves and caches go to
+`user/`. Insert or L3+R3 opens the settings overlay. Do not use `run.sh` or the launcher yet
+(see Limitations).
 
-Without the launcher:
+## Changes for Tomb Raider
 
-```
-BB_GAME_DIR=/path/to/CUSA16156 BB_EXE=menu python3 run.py
-```
+- TLS relocations through named local TLS symbols (the game's 2014 `libc.prx`), in
+  `scripts/link_modules.py`.
+- About 100 more imports: invitation dialog, `sceKernelSleep`, `posix_mmap`/`msync`, PlayGo,
+  camera, depth and pad-tracker stubs (no camera connected), sockets reporting offline
+  (`src/runtime_extra.c` and others).
+- shadPS4: 32 samplers per shader (the hair resolve uses more than 16); early fragment tests
+  from the depth control registers.
+- Diagnostics: `BB_TRACE_WAITS`, `BB_TRACE_SHADER`, `BB_TRACE_BUFFERS`, `BB_TRACE_BINDS`,
+  `BB_TRACE_GDS`, `BB_TRACE_DMA`, `BB_TRACE_SMALL_TARGETS`, `BB_UNDEF_ZERO`, `BB_PATCH_SHADERS`
+  (see `docs/HANDOFF.md`).
+- The settings overlay is in English.
 
-`BB_EXE` picks what starts: `menu` (the collection menu), `omg` (Virtual-On), `ot` (Oratorio
-Tangram) or `force` (Force). Saves and caches go to `user/` unless `BB_USER_DIR` says otherwise.
-
-## Changes from the ports it is built on
-
-- Decrypted ELF dumps load directly (`scripts/prepare.py`).
-- The runtime covers the newer SDK of Virtual-On's `libc.prx` (POSIX imports from libkernel,
-  thread-exit hooks, heap trace info) and the libraries the game uses offline: USB, RUDP,
-  dialogs, screenshots, more save data calls (`src/runtime_extra.c` and others).
-- Prepared vertex inputs are checked against the game's current vertex tables before use;
-  Virtual-On rewrites those tables between the preparation and the draw.
-- A DMA copy of a memory range onto itself no longer reloads the textures in that range.
-  Force issues one over each mech's shadow mask right after drawing it, and the reload replaced
-  the mask with stale memory: square shadows. shadPS4 has the same bug.
-- A draw that samples one of its own render targets gets a barrier between the write and the
-  read (`BB_FEEDBACK_BARRIER=0` turns it off).
-- Kernel event flags (`src/runtime_evf.c`) and NGS2, the menu's audio library
-  (`gpu/shim/ngs2`, from AnyPS5), for the collection menu.
-- Video playback: the clock runs on real time until the game asks for audio, and audio the game
-  never takes is dropped once expired (the SEGA logo froze otherwise). Two threads joining the
-  same player thread at the end of a video no longer hang it (the title video).
-- A guest mutex is handed to a thread that has waited over 100 ms for it: Linux let the menu's
-  audio thread take its mutex back every cycle, so the main thread could wait up to a minute at
-  boot. Shorter waits are left alone (`BB_MUTEX_HANDOFF=0` turns the hand-over off).
-- Thread dumps (`pkill -ALRM bb-probe`) also list guest code addresses found on each stack.
-- The upscaler's jitter also applies to passes drawn on a second scene-sized depth buffer.
-- A launcher of its own (`launcher/virtualon_launcher.py`, based on the Uncharted port's) with
-  original artwork: painted posters, or your own pictures in `launcher/art` (`menu.jpg`, `omg.jpg`,
-  `ot.jpg`, `force.jpg`).
-- `tools/toggle_bisect.py` finds which renderer optimization breaks a game's picture while it
-  runs (with `BB_TOGGLE_FILE`).
+The changes made for Virtual-On are listed in its own repository.
 
 ## Credits
 

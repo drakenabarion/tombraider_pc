@@ -186,6 +186,17 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
                 : 1;
         info.hw.fs.z_export_format = regs.z_export_format;
         info.hw.fs.motion_vectors = sel.motion;
+        // bbport: on the PS4 DB_SHADER_CONTROL runs the depth/stencil test before the pixel
+        // shader; Vulkan runs it after a shader that writes memory unless the shader asks for
+        // early tests (the emitter does that for such shaders). Tomb Raider's TressFX fill pass
+        // otherwise also stores the hair fragments hidden behind Lara's head and the scenery.
+        {
+            const auto& dsc = regs.depth_shader_control;
+            info.hw.fs.early_fragment_tests =
+                (dsc.depth_before_shader || dsc.z_order == AmdGpu::ZOrder::EarlyZLateZ ||
+                 dsc.z_order == AmdGpu::ZOrder::EarlyZReZ) &&
+                !dsc.z_export_enable && !dsc.kill_enable;
+        }
         u8 stencil_ref_export_enable = regs.depth_shader_control.stencil_op_val_export_enable |
                                        regs.depth_shader_control.stencil_test_val_export_enable;
         info.hw.fs.mrtz_mask = regs.depth_shader_control.z_export_enable |

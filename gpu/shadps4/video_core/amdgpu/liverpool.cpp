@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
+#include <cstdlib>
 #include <chrono>
 #include <pthread.h>
 #ifndef _WIN32
@@ -1286,6 +1288,26 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                     vo_port->WaitVoLabel([&] { return wait_reg_mem->Test(regs.reg_array); });
                     break;
                 }
+                // bbport: BB_TRACE_WAITS=1 prints the waits (label, condition, whether the
+                // command thread had to wait): which CPU flags a frame's GPU work waits for.
+                static const bool trace_waits = std::getenv("BB_TRACE_WAITS") != nullptr;
+                static std::atomic<u32> traced_waits{0};
+                if (trace_waits && wait_reg_mem->mem_space.Value() ==
+                                       PM4CmdWaitRegMem::MemSpace::Memory &&
+                    traced_waits.fetch_add(1) < 200000) {
+                    const auto* label = wait_reg_mem->Address<const volatile u32*>();
+                    std::printf("Wait label %#llx func %u ref %#x mask %#x value %#x %s at %lld us\n",
+                                static_cast<unsigned long long>(wait_reg_mem->Address<VAddr>()),
+                                u32(wait_reg_mem->function.Value()), wait_reg_mem->ref,
+                                wait_reg_mem->mask, *label,
+                                wait_reg_mem->Test(regs.reg_array) ? "met" : "WAITING",
+                                static_cast<long long>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch()).count()));
+                }
+                const bool trace_this_wait = trace_waits && wait_reg_mem->mem_space.Value() ==
+                                                 PM4CmdWaitRegMem::MemSpace::Memory &&
+                                             traced_waits.load() < 200000 &&
+                                             !wait_reg_mem->Test(regs.reg_array);
                 // bbport: a fence handed to the draw recording thread counts as written: that
                 // thread runs everything in stream order.
                 if (u32 value; wait_reg_mem->mem_space.Value() ==
@@ -1303,6 +1325,13 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                         continue;
                     }
                     YIELD_GFX();
+                }
+                if (trace_this_wait) {
+                    std::printf("Wait label %#llx ref %#x done at %lld us\n",
+                                static_cast<unsigned long long>(wait_reg_mem->Address<VAddr>()),
+                                wait_reg_mem->ref,
+                                static_cast<long long>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch()).count()));
                 }
                 break;
             }

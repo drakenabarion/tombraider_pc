@@ -13,9 +13,9 @@
 
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
-static constexpr u32 ShaderBinaryVersion = 9u; // bbport: addr64 buffer loads (ReadConst windows)
-static constexpr u32 ShaderMetaVersion = 9u; // bbport: Info layout (NUM_SAMPLERS 32)
-static constexpr u32 PipelineKeyVersion = 7u; // bbport: Info layout (NUM_SAMPLERS 32)
+static constexpr u32 ShaderBinaryVersion = 10u; // bbport: EarlyFragmentTests from DB_SHADER_CONTROL
+static constexpr u32 ShaderMetaVersion = 10u; // bbport: RuntimeInfo layout (early_fragment_tests)
+static constexpr u32 PipelineKeyVersion = 8u; // bbport: RuntimeInfo layout (early_fragment_tests)
 } // namespace Serialization
 
 namespace Vulkan {

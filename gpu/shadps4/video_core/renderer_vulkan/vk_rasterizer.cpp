@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <chrono>
+#include <format>
+#include <vector>
+#include <mutex>
+#include <thread>
 #include <map>
 #include "core/libraries/videoout/driver.h"
 #include <xxhash.h>
@@ -1630,6 +1635,31 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
             }
         }
     }
+    // bbport: BB_TRACE_SMALL_TARGETS=1 prints every colour target of at most 64x64 the first
+    // time it is drawn into (GPU-made textures the CPU may copy, e.g. Tomb Raider's hair cube).
+    static const bool trace_small = std::getenv("BB_TRACE_SMALL_TARGETS") != nullptr;
+    if (trace_small) {
+        static std::mutex small_mutex;
+        static std::vector<u64> small_seen;
+        for (u32 cb = 0; cb < AmdGpu::NUM_COLOR_BUFFERS; ++cb) {
+            const auto& col = regs.color_buffers[cb];
+            if (!col || col.Pitch() > 64 || col.Height() > 64) {
+                continue;
+            }
+            std::scoped_lock lk{small_mutex};
+            if (std::ranges::find(small_seen, col.Address()) != small_seen.end() ||
+                small_seen.size() > 4096) {
+                continue;
+            }
+            small_seen.push_back(col.Address());
+            const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
+            std::printf("Small target cb%u at %#llx %ux%u dfmt %u slices %u, vs %016llx ps %016llx\n",
+                        cb, static_cast<unsigned long long>(col.Address()), col.Pitch(),
+                        col.Height(), u32(col.GetDataFmt()), u32(col.NumSlices()),
+                        static_cast<unsigned long long>(vs_info.pgm_hash),
+                        static_cast<unsigned long long>(ps ? ps->pgm_hash : 0));
+        }
+    }
     if (FrameCapture::Active()) {
         const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
         FrameCapture::Draw(vs_info.pgm_hash, ps ? ps->pgm_hash : 0, num_indices, num_instances);
@@ -2922,6 +2952,22 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                     }
                 }
             }
+            // bbport: vertex-shader buffers served from the constant ring, as the shader reads
+            // them (the copy, first 16 words).
+            if (FrameCapture::Active() && stage.sw_stage == Shader::SwStage::Vertex &&
+                !desc.IsSpecial()) {
+                const auto vsharp = desc.GetSharp(stage);
+                const u32* w = reinterpret_cast<const u32*>(constant_ring->Data(ring->offset));
+                const u32 n = std::min<u32>(ring->size / 4, 16);
+                std::string note = std::format(
+                    "\n  vs {:08x} ring buffer {} from {:#x} size {} stride {} dfmt {} nfmt {}:",
+                    u32(stage.pgm_hash), buffer_index, ring->address, ring->size,
+                    u32(vsharp.stride), u32(vsharp.data_format), u32(vsharp.num_format));
+                for (u32 i = 0; i < n; ++i) {
+                    note += std::format(" {:08x}", w[i]);
+                }
+                FrameCapture::Note(note.c_str());
+            }
             if (!desc.IsSpecial()) {
                 if (ring->size == 864 && gbuffer_draw &&
                     memory->IsValidGpuMapping(ring->address, 0)) {
@@ -2933,6 +2979,25 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
         } else if (desc.IsSpecial()) {
             if (desc.buffer_type == Shader::BufferType::GdsBuffer) {
                 const auto* gds_buf = buffer_cache.GetGdsBuffer();
+                // bbport: GDS counters as last written back (may lag a frame), for append
+                // buffers such as Tomb Raider's TressFX node counter (offset in a user-data
+                // register's upper half, as M0 holds it).
+                if (FrameCapture::Active()) {
+                    const auto ud = stage.UserData();
+                    const u32* g = reinterpret_cast<const u32*>(gds_buf->mapped_data.data());
+                    std::string note = std::format("\n  gds bound by {:08x}:", u32(stage.pgm_hash));
+                    for (u32 i = 0; i < ud.size() && i < 8; ++i) {
+                        const u32 off = ud[i] >> 16;
+                        if (off != 0 && off + 4 <= gds_buf->SizeBytes() && (off & 3) == 0) {
+                            note += std::format(" ud{}={:08x}->gds[{:#x}]={}", i, ud[i], off, g[off / 4]);
+                        }
+                    }
+                    note += " first:";
+                    for (u32 i = 0; i < 16; ++i) {
+                        note += std::format(" {}", g[i]);
+                    }
+                    FrameCapture::Note(note.c_str());
+                }
                 buffer_infos.emplace_back(gds_buf->Handle(), 0, gds_buf->SizeBytes());
                 needs_barrier |= runtime.IsBufferAccessed(gds_buf, 0, gds_buf->SizeBytes());
             } else if (desc.buffer_type == Shader::BufferType::Flatbuf) {
@@ -2998,6 +3063,25 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                               u32(stage.pgm_hash), binding.buffer,
                               (unsigned long long)vsharp.base_address, u32(vsharp.GetSize()),
                               u32(vsharp.GetStride()), f[0], f[1], f[2], f[3]);
+                FrameCapture::Note(note);
+            }
+            // bbport: every vertex-shader buffer's descriptor (also buffers outside mapped GPU
+            // memory, e.g. tables in the executable): raw format fields and first words.
+            if (FrameCapture::Active() && stage.sw_stage == Shader::SwStage::Vertex) {
+                const bool mapped = vsharp.base_address != 0 &&
+                                    memory->IsValidGpuMapping(vsharp.base_address, 0);
+                const u32* w = mapped ? reinterpret_cast<const u32*>(vsharp.base_address) : nullptr;
+                char note[256];
+                std::snprintf(note, sizeof(note),
+                              "\n  vs %08x buffer %u at %#llx records %u stride %u dfmt %u nfmt %u "
+                              "dst_sel %u%u%u%u mapped %d: %08x %08x %08x %08x %08x %08x %08x %08x",
+                              u32(stage.pgm_hash), binding.buffer,
+                              (unsigned long long)vsharp.base_address, vsharp.num_records,
+                              u32(vsharp.stride), u32(vsharp.data_format), u32(vsharp.num_format),
+                              u32(vsharp.dst_sel_x), u32(vsharp.dst_sel_y), u32(vsharp.dst_sel_z),
+                              u32(vsharp.dst_sel_w), mapped, w ? w[0] : 0, w ? w[1] : 0,
+                              w ? w[2] : 0, w ? w[3] : 0, w ? w[4] : 0, w ? w[5] : 0,
+                              w ? w[6] : 0, w ? w[7] : 0);
                 FrameCapture::Note(note);
             }
             if (FrameCapture::Active() && vsharp.base_address != 0 && vsharp.GetSize() != 0 &&
@@ -3128,7 +3212,16 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             }
         }
         static std::atomic<u32> traced{0};
-        if (traced.fetch_add(1, std::memory_order_relaxed) < 8) {
+        // BB_TRACE_COUNT: how many draws are traced (default 8).
+        static const u32 trace_count = [] {
+            const char* env = std::getenv("BB_TRACE_COUNT");
+            return env ? u32(std::strtoul(env, nullptr, 10)) : 8u;
+        }();
+        if (traced.fetch_add(1, std::memory_order_relaxed) < trace_count) {
+            std::printf("Trace %08x bind at %lld us (prepared %d, helper %d)\n", u32(stage.pgm_hash),
+                        static_cast<long long>(std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch()).count()),
+                        int(prepared != nullptr), int(on_helper));
             for (u32 i = 0; i < stage.images.size(); ++i) {
                 const auto t = prepared ? prepared->image_sharps[i] : stage.images[i].GetSharp(stage);
                 std::printf("Trace %08x image %u: at 0x%llx %ux%u data %u num %u dst_sel %u%u%u%u "
@@ -3138,13 +3231,79 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                             u32(t.num_format), u32(t.dst_sel_x), u32(t.dst_sel_y), u32(t.dst_sel_z),
                             u32(t.dst_sel_w), u32(t.base_level), u32(t.last_level), u32(t.type),
                             int(stage.images[i].is_written));
+                // bbport: tiling and the first words in guest memory (CPU-written textures).
+                std::printf("Trace %08x image %u: tile %u pitch %u depth %u layers %u words:",
+                            u32(stage.pgm_hash), i, u32(t.tiling_index), u32(t.Pitch()),
+                            u32(t.depth), t.NumLayers());
+                if (t.Address() != 0 && memory->IsValidGpuMapping(t.Address(), 64)) {
+                    const auto* tw = reinterpret_cast<const u32*>(t.Address());
+                    for (u32 w = 0; w < 16; ++w) {
+                        std::printf(" %08x", tw[w]);
+                    }
+                    const u32 face_bytes = u32(t.width + 1) * u32(t.height + 1) * 4;
+                    if (t.IsCube() && face_bytes <= 4096 &&
+                        memory->IsValidGpuMapping(t.Address(), face_bytes * 6)) {
+                        for (u32 f = 0; f < 6; ++f) {
+                            const auto* fw = tw + f * face_bytes / 4;
+                            u32 nonzero = 0, first_nonzero = 0, sample = 0;
+                            for (u32 w = 0; w < face_bytes / 4; ++w) {
+                                if (fw[w] != 0) {
+                                    if (!nonzero++) {
+                                        first_nonzero = w;
+                                        sample = fw[w];
+                                    }
+                                }
+                            }
+                            std::printf(" | face %u: %u/%u non-zero (first at %u: %08x)", f, nonzero,
+                                        face_bytes / 4, first_nonzero, sample);
+                        }
+                        // bbport: is the cube filled after the draw was processed (data the game
+                        // writes after submitting, while the PS4 GPU still lags behind)?
+                        const VAddr cube = t.Address();
+                        const u32 words = face_bytes * 6 / 4;
+                        // Polled every 50 us for 200 ms: when the first and the last word
+                        // change (steady clock, comparable with BB_TRACE_WAITS).
+                        std::thread([cube, words, hash = u32(stage.pgm_hash)] {
+                            const auto now_us = [] {
+                                return static_cast<long long>(
+                                    std::chrono::duration_cast<std::chrono::microseconds>(
+                                        std::chrono::steady_clock::now().time_since_epoch())
+                                        .count());
+                            };
+                            const auto* cw = reinterpret_cast<const volatile u32*>(cube);
+                            std::vector<u32> last(words);
+                            for (u32 w = 0; w < words; ++w) last[w] = cw[w];
+                            const long long start = now_us();
+                            long long first_change = 0, last_change = 0;
+                            u32 changes = 0;
+                            while (now_us() - start < 200000) {
+                                for (u32 w = 0; w < words; ++w) {
+                                    const u32 v = cw[w];
+                                    if (v != last[w]) {
+                                        last[w] = v;
+                                        last_change = now_us();
+                                        if (!changes++) first_change = last_change;
+                                    }
+                                }
+                                std::this_thread::sleep_for(std::chrono::microseconds(50));
+                            }
+                            u32 nz = 0;
+                            for (u32 w = 0; w < words; ++w) nz += last[w] != 0;
+                            std::printf("Trace %08x cube at %#llx: %u word changes, first at %lld us, "
+                                        "last at %lld us, %u/%u non-zero at the end\n",
+                                        hash, static_cast<unsigned long long>(cube), changes,
+                                        first_change, last_change, nz, words);
+                        }).detach();
+                    }
+                }
+                std::printf("\n");
             }
             // The constant blocks behind the user data pointer (SGPR0-1): its words, and the
             // first 16 floats of the blocks its pointer pairs 2/3, 4/5 and 6/7 lead to.
             const auto ud = stage.UserData();
             if (ud.size() >= 2) {
                 const VAddr p = VAddr(ud[0]) | VAddr(ud[1]) << 32;
-                if (memory->IsValidGpuMapping(p, 32)) {
+                if (p != 0 && memory->IsValidGpuMapping(p, 32)) {
                     const auto* pw = reinterpret_cast<const u32*>(p);
                     std::printf("Trace %08x user data pointer 0x%llx:", u32(stage.pgm_hash),
                                 static_cast<unsigned long long>(p));
@@ -3154,7 +3313,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                     std::printf("\n");
                     for (u32 pair = 2; pair < 8; pair += 2) {
                         const VAddr q = VAddr(pw[pair]) | VAddr(pw[pair + 1]) << 32;
-                        if (!memory->IsValidGpuMapping(q, 64)) {
+                        if (q == 0 || !memory->IsValidGpuMapping(q, 64)) {
                             continue;
                         }
                         const auto* qf = reinterpret_cast<const float*>(q);
@@ -3365,6 +3524,38 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             auto& image_view = texture_cache.FindTexture(
                 image_id, desc, memo_entry ? &memo_entry->view_memo : nullptr, !on_helper);
             const auto binding = image.binding;
+            // bbport diagnosis: BB_TRACE_BINDS=<hash low 32 bits>: the cached image each binding
+            // of that shader resolves to (first BB_TRACE_COUNT draws).
+            {
+                static const u32 binds_hash = [] {
+                    const char* env = std::getenv("BB_TRACE_BINDS");
+                    return env ? u32(std::strtoull(env, nullptr, 16)) : 0u;
+                }();
+                static const u32 binds_count = [] {
+                    const char* env = std::getenv("BB_TRACE_COUNT");
+                    return env ? u32(std::strtoul(env, nullptr, 10)) : 8u;
+                }();
+                static std::atomic<u32> binds_lines{0};
+                if (binds_hash && u32(stage.pgm_hash) == binds_hash &&
+                    binds_lines.fetch_add(1, std::memory_order_relaxed) < binds_count * 16) {
+                    std::printf("Bind %08x #%u: image %u at 0x%llx %ux%ux%u layers %u fmt %d "
+                                "depth %u tile %u flags %#x usage rt %u dt %u tex %u storage %u "
+                                "scene_proxy %d proxy_ok %d target %u general %u view fmt %d "
+                                "type %d layers %u-%u\n",
+                                binds_hash, binding_index, u32(image_id.index),
+                                static_cast<unsigned long long>(image.info.guest_address),
+                                image.info.size.width, image.info.size.height,
+                                image.info.size.depth, image.info.resources.layers,
+                                int(image.info.pixel_format), u32(image.info.props.is_depth),
+                                u32(image.info.tile_mode), u32(image.flags),
+                                u32(image.usage.render_target), u32(image.usage.depth_target),
+                                u32(image.usage.texture), u32(image.usage.storage),
+                                int(image.scene_proxy), int(bool(binding_proxy_ok[binding_index])),
+                                u32(binding.is_target), u32(binding.force_general),
+                                int(desc.view_info.format), int(desc.view_info.type),
+                                desc.view_info.range.base.layer, desc.view_info.range.extent.layers);
+                }
+            }
 
             // bbport: a proxied scene image sampled with normalized coordinates reads the proxy:
             // no resample to the native size (the native image is not touched).
@@ -4030,7 +4221,38 @@ void Rasterizer::DepthStencilCopy(bool is_depth, bool is_stencil) {
     ScopeMarkerEnd();
 }
 
+// bbport: BB_TRACE_GDS=1 prints command-stream writes into GDS (append counter resets).
+static bool TraceGds() {
+    static const bool value = std::getenv("BB_TRACE_GDS") != nullptr;
+    return value;
+}
+static void TraceGdsWrite(const char* what, u64 offset, u32 num_bytes, u64 value) {
+    static std::atomic<u32> lines{0};
+    if (TraceGds() && lines.fetch_add(1) < 300) {
+        std::printf("GDS %s at %#llx, %u bytes, value/source %#llx\n", what,
+                    static_cast<unsigned long long>(offset), num_bytes,
+                    static_cast<unsigned long long>(value));
+    }
+}
+
+// bbport: BB_TRACE_DMA=1 prints small command-stream copies and fills into memory (which
+// textures the command processor fills, e.g. Tomb Raider's hair ambient cube).
+static void TraceDmaWrite(const char* what, u64 dst, u32 num_bytes, u64 src, bool src_gds) {
+    static const bool enabled = std::getenv("BB_TRACE_DMA") != nullptr;
+    static std::atomic<u32> lines{0};
+    if (enabled && num_bytes <= 16384 && lines.fetch_add(1) < 600) {
+        std::printf("DMA %s to %#llx, %u bytes, from %s%#llx\n", what,
+                    static_cast<unsigned long long>(dst), num_bytes, src_gds ? "gds " : "",
+                    static_cast<unsigned long long>(src));
+    }
+}
+
 void Rasterizer::FillBuffer(VAddr address, u32 num_bytes, u32 value, bool is_gds) {
+    if (is_gds) {
+        TraceGdsWrite("fill", address, num_bytes, value);
+    } else {
+        TraceDmaWrite("fill", address, num_bytes, value, false);
+    }
     DrainDrawPipe();
     ASSERT_MSG(address % 4 == 0 && num_bytes % 4 == 0,
                "FillBuffer address and size must be a multiple of 4 bytes");
@@ -4052,6 +4274,11 @@ void Rasterizer::FillBuffer(VAddr address, u32 num_bytes, u32 value, bool is_gds
 }
 
 void Rasterizer::CopyBuffer(VAddr dst, VAddr src, u32 num_bytes, bool dst_gds, bool src_gds) {
+    if (dst_gds) {
+        TraceGdsWrite("copy", dst, num_bytes, src);
+    } else {
+        TraceDmaWrite("copy", dst, num_bytes, src, src_gds);
+    }
     if (!dst_gds && !src_gds && dst == src) {
         // A DMA copy onto itself leaves memory unchanged. Virtual-On Force issues one over a
         // render target it just drew (its shadow maps); invalidating the image here would
