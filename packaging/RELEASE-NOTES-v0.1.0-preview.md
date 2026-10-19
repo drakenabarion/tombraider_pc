@@ -11,7 +11,7 @@ Make `Tomb-Raider-DE-x86_64.AppImage` executable and start it, set the game fold
 Boots, plays the intro videos with sound, and plays to the first base camp at 60 FPS.
 
 ### Limitations
-- **TressFX hair looks silvery and flickers** (one flat shade with a white highlight). Under investigation.
+- **TressFX hair flickers under dynamic lighting:** normally dark, but in some lighting the whole head of hair flickers to a silvery tone. Under investigation.
 - **Shader compilation stutter:** shaders compile on first use, so new areas stutter heavily. The pipeline cache is off in this build.
 - Lighting flicker in caves where sunlight comes in.
 - Rain draws a grey distortion line along the top edge of the screen.

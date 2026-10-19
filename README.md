@@ -28,10 +28,10 @@ comments still carry Virtual-On, Uncharted or Bloodborne names.
 
 Known problems (as of October 2026):
 
-- **TressFX hair looks silvery and flickers.** The whole head of hair takes one flat shade, with a
-  white highlight that changes as Lara moves. Current lead: the hair resolve shader's per-light
-  diffuse term (it uses the 8192x4096 shadow map) seems to come out as zero, leaving only the
-  specular highlight. See `docs/HANDOFF.md`.
+- **TressFX hair flickers under dynamic lighting.** The hair is normally dark, as it should be,
+  but in some lighting situations the whole head of hair flickers to a silvery tone from frame
+  to frame. Likely in the hair shader's per-light path (shadow map, light falloff). See
+  `docs/HANDOFF.md`.
 - **Shader compilation stutter.** Each new shader compiles on first use; large parts of the game
   stutter until compiled. Run with `BB_PIPELINE_CACHE=0` for now (the cache is off while the port
   is being debugged).

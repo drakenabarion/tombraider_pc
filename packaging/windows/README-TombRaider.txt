@@ -17,7 +17,7 @@ Starting
 - Insert or L3+R3 in game opens the settings overlay.
 
 Known problems
-- TressFX hair looks silvery and flickers.
+- TressFX hair flickers to a silvery tone under some dynamic lighting.
 - Heavy stutter while shaders compile on first use.
 - Lighting flicker in caves with sunlight; a grey line at the top of the screen in rain.
 - Some launcher options come from the Virtual-On launcher and may not apply.
