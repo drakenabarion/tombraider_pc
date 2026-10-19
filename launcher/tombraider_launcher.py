@@ -314,6 +314,8 @@ def game_environment(s, start=None):
         pass
     env['BB_GAME_DIR'] = s['game_dir']
     env['BB_EXE'] = start or s['start']
+    # Pipeline cache off while the port is being debugged (BB_PIPELINE_CACHE=1 turns it on).
+    env.setdefault('BB_PIPELINE_CACHE', '0')
     if s['user_dir']:
         env['BB_USER_DIR'] = s['user_dir']
     env['BB_LANGUAGE'] = s['language']
