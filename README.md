@@ -37,12 +37,9 @@ Known problems (as of October 2026):
   is being debugged).
 - **Lighting flicker** in caves where sunlight comes in.
 - **Rain:** a grey distortion line along the top edge of the screen.
-- **Packaging is not adapted yet:** `run.sh`, the launcher, the AppImage and the Windows build
-  scripts are still Virtual-On's and do not work for this game. Use `run.py`.
-- Windows is not built or tested.
 - Online features report offline.
 
-Updates will be slow for a while: the maintainer has a busy few days ahead.
+Updates will be slow for a while: I have a busy few days ahead.
 
 ## Requirements
 
@@ -66,6 +63,9 @@ The Windows build path (MSYS2 CLANG64, `packaging/windows/`) is inherited from V
 has not been adapted or tested for this game.
 
 ## Running
+
+Note: **Packaging is not adapted yet:** `run.sh`, the launcher, the AppImage and the Windows build
+  scripts are still Virtual-On's and do not work for this game. Use `run.py`.
 
 From the source tree:
 
