@@ -271,9 +271,12 @@ public:
     }
 
     /// Clears all slices of the specified metadata surface.
-    bool ClearMeta(VAddr address) {
+    bool ClearMeta(VAddr address, u64 write_size = 0) {
         auto it = surface_metas.find(address);
         if (it != surface_metas.end()) {
+            if (write_size && it->second.max_size && write_size > it->second.max_size) {
+                return false;
+            }
             it.value().clear_mask = u32(-1);
             return true;
         }
@@ -449,7 +452,29 @@ private:
     struct MetaDataInfo {
         MetaType type;
         s32 clear_mask = -1;
+        // bbport: upper bound of the metadata surface size (0 = unknown). A compute shader that
+        // writes more than this at the address is not clearing metadata: the memory has been
+        // reused (Tomb Raider: the TressFX head-pointer buffer sits on a stale CMASK address).
+        u64 max_size = 0;
     };
+    static u64 MetaMaxSize(const ImageInfo& info, MetaType type) {
+        const u64 pixels = u64(std::max(info.pitch, info.size.width)) * info.size.height *
+                           std::max(1u, info.resources.layers);
+        switch (type) {
+        case MetaType::CMask:
+            return pixels / 16 + 64_KB;
+        case MetaType::HTile:
+            return pixels / 4 + 64_KB;
+        case MetaType::FMask:
+            return pixels * std::max(1u, info.num_samples) / 2 + 64_KB;
+        }
+        return 0;
+    }
+    void RegisterMeta(VAddr address, MetaType type, const ImageInfo& info, s32 clear_mask = -1) {
+        auto [it, inserted] = surface_metas.try_emplace(
+            address, MetaDataInfo{.type = type, .clear_mask = clear_mask});
+        it.value().max_size = std::max(it->second.max_size, MetaMaxSize(info, type));
+    }
     tsl::robin_map<VAddr, MetaDataInfo> surface_metas;
 };
 

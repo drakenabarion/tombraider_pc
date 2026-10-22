@@ -346,6 +346,18 @@ private:
     void DumpSampled();
     u64 stale_vertex_inputs{}; ///< prepared vertex inputs rejected: their V# table changed
     std::array<float, 2> draw_jitter{};         ///< viewport offset of the current draw, pixels
+    /// bbport: a depth/stencil clear (DB_RENDER_CONTROL) limited by the scissor to part of the
+    /// target (Tomb Raider clears one shadow-atlas tile): cleared as a rectangle after the
+    /// render pass begins instead of with a whole-image load clear.
+    struct PartialClear {
+        bool depth = false;
+        bool stencil = false;
+        float depth_value = 0.f;
+        u32 stencil_value = 0;
+        vk::Rect2D rect{};
+    };
+    PartialClear partial_clear{};
+    void RecordPartialClear();
     std::array<float, 2> target_scale{1.0f, 1.0f}; ///< pass drawn into the upscaler's output-size images
     const bool host_markers_enabled;
     const bool guest_markers_enabled;

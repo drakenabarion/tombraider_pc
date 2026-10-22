@@ -39,67 +39,57 @@ draws and bindings in `video_core/renderer_vulkan/vk_rasterizer.cpp`, shader tra
 `shader_recompiler/`), built into `out/gpu/libbbgpu.so`. **If you change the layout of
 `Shader::Info` or `RuntimeInfo`, bump the versions in `vk_pipeline_serialization.cpp`.**
 
-## Open problems, in priority order
-
-### 1. TressFX hair is silvery (the main open bug)
-
-**Symptom, corrected by the maintainer (October 2026):** the hair is not silvery all the time.
-It flickers and turns silvery **in some conditions, mostly under dynamic lighting**. Read the
-analysis below with that in mind: a fault that depends on the lights and changes from frame to
-frame points at the per-light path of the resolve shader (shadow-map compares on image 2,
-falloff LUTs on images 3-9) or at a binding that resolves differently between frames, not at a
-constant fault. Run the binding trace below in a scene with a dynamic light, over several
-frames (raise `BB_TRACE_COUNT`), and compare what binding 2 resolves to from frame to frame.
+### Fixed in October 2026: TressFX hair and cave lighting
 
 TressFX runs as compute passes (simulation), then fill pass 2 (vs `f871bb9d932e79ab`,
 ps `aa7cd3c6214fb035`), which builds a per-pixel linked list (12-byte nodes: tangent, depth, next;
-counter in GDS[0]), then resolve pass 3 (ps `42d601c4e9788311`, low 32 bits `e9788311`), which
-blends into the RGBA8 scene target.
+counter in GDS[0]; heads table 1920x1080x4 bytes), then resolve pass 3 (ps `42d601c4e9788311`,
+low 32 bits `e9788311`), which walks each list, keeps the 8 nearest fragments and blends them
+into the scene target. Four separate bugs were behind the hair and cave lighting problems:
 
-Already ruled out: tangents and node decode (a debug patch showed correct colourful tangents),
-the GDS node counter, cube addressing, early depth tests, undefined values, texture
-upload paths, and the ambient cube (image 0: filled correctly in gameplay; it only scales
-brightness between 0.1 and 0.25).
+1. **Hair flicker (shader translator).** The resolve shader narrows EXEC with a plain
+   `s_and_b64 exec, s0, vcc` before each node load. shadPS4's `CFG::SplitDivergenceScopes`
+   only opened a divergence scope for `S_AND_SAVEEXEC_B64`, so lanes that EXEC had switched off
+   still loaded and overwrote their registers; their `next` became 0 and they walked node 0, a
+   random fragment from the current frame. Fix: `S_AND_B64` into EXEC opens a scope
+   (`shader_recompiler/frontend/control_flow_graph.cpp`).
+2. **Hair noise in some scenes (skipped clear).** The game clears the heads table with a small
+   compute shader every frame. In the scene after the beach that memory had earlier held a render
+   target's CMASK, and `Rasterizer::IsComputeMetaClear` treats a compute write to a known
+   metadata address as a metadata clear and skips the dispatch, so the lists piled up across
+   frames. Fix: each registered CMASK/FMASK/HTILE now records an upper bound of its size
+   (`TextureCache::RegisterMeta`), and a write larger than that is not treated as a metadata
+   clear (`texture_cache.h`, `vk_rasterizer.cpp`).
+3. **Shadow atlas tiles (partial depth clear).** A register depth/stencil clear limited by the
+   scissor to one shadow-atlas tile cleared the whole image. It is now a rectangle clear after
+   the pass begins (`RecordPartialClear`; `BB_PARTIAL_DEPTH_CLEAR=0` turns it off). Linear
+   depth exports (`PA_CL_VTE_CNTL.VTX_Z_FMT`) are honoured too (`BB_VTX_Z_FMT=0` turns it off).
+4. **Light volumes (masked stencil clear).** Stencil clears with a partial write mask (the game
+   resets bits 0x7 and keeps the 0x80 tag) wiped all 8 bits. They now go through the draw's own
+   stencil ops (`MaskedStencilClear`; `BB_MASKED_STENCIL_CLEAR=0` turns it off).
 
-What the resolve shader does (from `user/shader/dumps/fs_0x42d601c4e9788311.irprogram.txt`, made
-with `BB_DUMP_SHADERS=1` and the cache off): hair base colour is a constant in the shader
-(0.145, 0.106, 0.071 = brown). Colour = base x per-light diffuse (lights loop with 4-tap
-shadow-map compares on image 2, the 8192x4096 shadow map at `0x1040008000`, and falloff LUTs
-on images 3-9) + a white Kajiya-Kay specular that is NOT shadowed and fades as diffuse brightens.
-The symptom as first described (one flat shade, white highlight changing with the view) fits **diffuse = 0**, so
-the leading suspect is the shadow-map binding: every compare fails, or the binding resolves to
-the wrong image (bbport's scene proxies or upscaler redirects can swap bindings).
+The hair looks somewhat bright in dark scenes (the candle-lit cave after the opening). PS4 footage
+shows the same, so this is the original look. A darker hair would be an optional mod.
 
-Next step, already built into the code but not yet run:
+The diagnostics used to find these (hair buffer dumps, CPU write watcher, hardware breakpoints,
+pixel interlock, CFG trace) were removed; the full diff is in `out/hair-diagnostics/` on the
+maintainer's machine. Shader patches: put a modified SPIR-V at
+`user/shader/patch/fs_0x<hash>_0.spv` and run with `BB_PATCH_SHADERS=1` (spirv-tools:
+`spirv-dis`, `spirv-as`, check with `spirv-val --target-env vulkan1.3`). The `.dbg-*` and
+`.cur-*` files there are inactive test variants of the resolve shader (no fog, no shadow, no
+cube, no specular, tangent colours); rename one to `fs_0x42d601c4e9788311_0.spv` to use it.
 
-```
-cd /run/media/draken/e2b89716-ca77-4bf6-8f14-0fe93582fd70/Projects/tombraider_pc && bash build.sh && BB_GAME_DIR="/run/media/draken/e2b89716-ca77-4bf6-8f14-0fe93582fd70/Games/Tomb Raider/Game" BB_PIPELINE_CACHE=0 BB_TRACE_BINDS=e9788311 BB_TRACE_COUNT=60 python3 run.py 2>&1 | tee out/play.log
-```
+## Open problems, in priority order
 
-Then `grep "^Bind e9788311 #2:" out/play.log`. Binding 2 should be the real depth image
-(`depth 1`, `usage ... dt 1`, the shadow map rendered as a depth target). If it is a colour image,
-an image with `dt 0`, or `scene_proxy 1`, that is the bug: the hair samples empty memory or a
-stand-in instead of the rendered shadow map. If it is the correct depth image, check the compare:
-the sampler words are in the `BB_TRACE_SHADER=42d601c4e9788311` output (depth compare func 3,
-less-or-equal), and a shader patch that forces the shadow factor to 1 would confirm it.
+### 1. Other visual bugs
 
-Shader patches: put a modified SPIR-V at `user/shader/patch/fs_0x<hash>_0.spv` and run with
-`BB_PATCH_SHADERS=1` (spirv-tools: `spirv-dis`, `spirv-as`, check with
-`spirv-val --target-env vulkan1.3`). `fs_0x42d601c4e9788311_0.spv` there now is a **debug patch
-that colours the hair by tangent**. The maintainer wants it as an optional mod later. It is only
-active with `BB_PATCH_SHADERS=1`.
-
-### 2. Other visual bugs
-
-- Hair flicker (may share the cause above).
-- Lighting flicker in caves with sunlight coming in.
 - Rain: grey distortion line along the top edge of the screen.
 
-### 3. Shader compilation stutter
+### 2. Shader compilation stutter
 
 Shaders compile on first use. Later: async compilation and/or enabling the pipeline cache.
 
-### 4. Packaging (needed before any binary release)
+### 3. Packaging (needed before any binary release)
 
 Everything in `packaging/`, `launcher/` and `run.sh` is still Virtual-On's: the launcher
 (`launcher/virtualon_launcher.py`), the AppImage (`dist/Virtual-On-x86_64.AppImage`, data in
@@ -109,7 +99,7 @@ does). Rename to Tomb Raider, give it its own data folder, then build `appimage-
 Linux and `packaging/windows/build-windows.bat` on Windows. The Virtual-On repo
 (`Projects/virtualon_pc`) shows how its releases were made.
 
-### 5. Clean-up
+### 4. Clean-up
 
 - Quiet the repeated `SetQueueReg` warnings in `liverpool.cpp` (`ProcessCompute`).
 - The diagnostics (`BB_TRACE_*`) can stay; they are off unless their variable is set.
@@ -126,6 +116,7 @@ Linux and `packaging/windows/build-windows.bat` on Windows. The Virtual-On repo
 | `BB_TRACE_GDS`, `BB_TRACE_DMA`, `BB_TRACE_SMALL_TARGETS` | GDS / DMA writes, small render targets |
 | `BB_DUMP_SHADERS=1` | Shader IR dumps to `user/shader/dumps` (cache must be off) |
 | `BB_PATCH_SHADERS=1` | Load SPIR-V replacements from `user/shader/patch` |
+| `BB_VTX_Z_FMT=0`, `BB_PARTIAL_DEPTH_CLEAR=0`, `BB_MASKED_STENCIL_CLEAR=0` | Turn off the October 2026 depth/stencil fixes (for comparison) |
 | `BB_SKIP_SHADERS=<hashes>` | Skip draws with those shaders |
 | `BB_TOGGLE_FILE=<file>` | Live renderer toggles (bits in `gpu/shim/bbport_toggles.h`) |
 | `BB_CAPTURE_TRIGGER/BY_FLIP/DIR` | Frame captures |

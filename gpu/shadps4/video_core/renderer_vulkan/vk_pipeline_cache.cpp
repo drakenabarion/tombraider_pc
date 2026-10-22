@@ -171,6 +171,13 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
             !instance.IsDepthClipControlSupported() &&
             regs.clipper_control.clip_space == AmdGpu::ClipSpace::MinusWToW;
         info.hw.vs.clip_disable = regs.IsClipDisabled();
+        // bbport: BB_VTX_Z_FMT=0 ignores PA_CL_VTE_CNTL.VTX_Z_FMT (shadPS4's old behaviour).
+        static const bool honour_z_fmt = [] {
+            const char* env = std::getenv("BB_VTX_Z_FMT");
+            return !(env && env[0] == '0');
+        }();
+        info.hw.vs.z_not_divided = honour_z_fmt && regs.viewport_control.z_transformed &&
+                                   !regs.IsClipDisabled();
         info.hw.vs.motion_vectors = sel.motion;
         break;
     }

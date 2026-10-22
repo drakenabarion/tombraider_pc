@@ -364,13 +364,11 @@ static ABI int32_t thread_set_prio(GuestThread *t,int prio) {
 /* BB_AFFINITY=1: the guest's core masks are applied, PS4 core i on host logical processor 2*i
  * (one per physical core where SMT pairs neighbour). Off by default: the PS4 scheduler's
  * guarantees (threads on one core never run at once) are not otherwise reproduced. */
-#ifdef _WIN32
 static int affinity_enabled(void) {
     static int value=-1;
     if (value<0) { const char *env=getenv("BB_AFFINITY"); value=env && env[0]=='1'; }
     return value;
 }
-#endif
 static void apply_affinity(GuestThread *t,int current_thread) {
 #ifdef _WIN32
     if (!affinity_enabled()) return;
@@ -382,7 +380,21 @@ static void apply_affinity(GuestThread *t,int current_thread) {
     printf("Runtime: thread '%s' on PS4 cores 0x%llx (host mask 0x%llx)%s\n",t->name,
            (unsigned long long)t->attr.affinity,(unsigned long long)host,previous ? "" : " failed");
 #else
-    (void)t; (void)current_thread;
+    /* Linux: the same mapping (PS4 core i -> host logical CPU 2*i, the first SMT sibling of each
+     * physical core on Intel/AMD numbering) through pthread_setaffinity_np. */
+    if (!affinity_enabled()) return;
+    cpu_set_t set; CPU_ZERO(&set);
+    const long cpus=sysconf(_SC_NPROCESSORS_ONLN);
+    int any=0;
+    for (int i=0;i<7;++i) if (t->attr.affinity>>i&1) {
+        const long cpu=cpus>=14 ? 2*i : i%(cpus>0 ? cpus : 1);
+        CPU_SET((int)cpu,&set); any=1;
+    }
+    if (!any) return;
+    const pthread_t handle=current_thread ? pthread_self() : t->host;
+    const int e=pthread_setaffinity_np(handle,sizeof(set),&set);
+    printf("Runtime: thread '%s' on PS4 cores 0x%llx%s\n",t->name,
+           (unsigned long long)t->attr.affinity,e ? " failed" : "");
 #endif
 }
 static ABI int32_t thread_set_affinity(GuestThread *t,uint64_t mask) {

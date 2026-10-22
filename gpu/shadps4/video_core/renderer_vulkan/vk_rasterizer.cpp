@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <chrono>
+#include <cmath>
 #include <format>
 #include <vector>
 #include <mutex>
@@ -1581,6 +1582,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     DumpSampled();
     FeedbackBarrier();
     scheduler.BeginRendering(state);
+    RecordPartialClear();
 
     const auto& vs_info = pipeline->GetStage(Shader::SwStage::Vertex);
     const auto& fetch_shader = pipeline->GetFetchShader();
@@ -1771,6 +1773,7 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     DumpSampled();
     FeedbackBarrier();
     scheduler.BeginRendering(state);
+    RecordPartialClear();
 
     ASSERT(stride == (is_indexed ? sizeof(VkDrawIndexedIndirectCommand)
                                  : sizeof(VkDrawIndirectCommand)));
@@ -2706,8 +2709,10 @@ bool Rasterizer::IsComputeMetaClear(const Pipeline* pipeline) {
     if (!info.has_bitwise_xor) {
         // Assume if a shader writes metadata without address calculation, it is a clear shader.
         for (const auto& desc : info.buffers) {
-            const VAddr address = desc.GetSharp(info).base_address;
-            if (!desc.IsSpecial() && desc.is_written && texture_cache.ClearMeta(address)) {
+            const auto sharp = desc.GetSharp(info);
+            const VAddr address = sharp.base_address;
+            if (!desc.IsSpecial() && desc.is_written &&
+                texture_cache.ClearMeta(address, sharp.GetSize())) {
                 // Assume all slices were updates
                 LOG_TRACE(Render_Vulkan, "Metadata update skipped");
                 return true;
@@ -2827,6 +2832,10 @@ bool Rasterizer::IsComputeImageClear(const Pipeline* pipeline) {
     runtime.ClearImage(&image1, range, clear);
     return true;
 }
+
+namespace {
+bool MaskedStencilClear(const AmdGpu::Regs& regs);
+} // namespace
 
 namespace {
 /// bbport diagnosis: BB_WATCH_GPU_WRITE=<address>: GPU writes into the 4 KiB from there are printed.
@@ -3798,6 +3807,70 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
     return true;
 }
 
+namespace {
+/// bbport: the scissor rectangle of viewport 0 for the current registers (unscaled), as
+/// UpdateViewportScissorState combines it.
+vk::Rect2D CurrentScissor0(const AmdGpu::Regs& regs) {
+    const bool enable_offset = !regs.window_scissor.window_offset_disable;
+    const s16 wx = enable_offset ? regs.window_offset.window_x_offset : 0;
+    const s16 wy = enable_offset ? regs.window_offset.window_y_offset : 0;
+    s32 x0 = std::max({s32(regs.screen_scissor.top_left_x), s32(s16(regs.window_scissor.top_left_x) + wx),
+                       s32(s16(regs.generic_scissor.top_left_x) + wx)});
+    s32 y0 = std::max({s32(regs.screen_scissor.top_left_y), s32(s16(regs.window_scissor.top_left_y) + wy),
+                       s32(s16(regs.generic_scissor.top_left_y) + wy)});
+    s32 x1 = std::min({s32(regs.screen_scissor.bottom_right_x), s32(regs.window_scissor.bottom_right_x + wx),
+                       s32(regs.generic_scissor.bottom_right_x + wx)});
+    s32 y1 = std::min({s32(regs.screen_scissor.bottom_right_y), s32(regs.window_scissor.bottom_right_y + wy),
+                       s32(regs.generic_scissor.bottom_right_y + wy)});
+    if (regs.mode_control.vport_scissor_enable) {
+        x0 = std::max(x0, s32(regs.viewport_scissors[0].top_left_x));
+        y0 = std::max(y0, s32(regs.viewport_scissors[0].top_left_y));
+        x1 = std::min(x1, s32(regs.viewport_scissors[0].bottom_right_x));
+        y1 = std::min(y1, s32(regs.viewport_scissors[0].bottom_right_y));
+    }
+    // A clear draw covers only its viewport (full-screen triangle): intersect with it.
+    if (!regs.IsClipDisabled() && regs.viewports[0].xscale != 0) {
+        const auto& vp = regs.viewports[0];
+        const auto& vc = regs.viewport_control;
+        const float xo = vc.xoffset_enable ? vp.xoffset : 0.f;
+        const float xs = vc.xscale_enable ? vp.xscale : 1.f;
+        const float yo = vc.yoffset_enable ? vp.yoffset : 0.f;
+        const float ys = vc.yscale_enable ? vp.yscale : 1.f;
+        const float vx0 = std::min(xo - xs, xo + xs), vx1 = std::max(xo - xs, xo + xs);
+        const float vy0 = std::min(yo - ys, yo + ys), vy1 = std::max(yo - ys, yo + ys);
+        x0 = std::max(x0, s32(std::floor(vx0)));
+        y0 = std::max(y0, s32(std::floor(vy0)));
+        x1 = std::min(x1, s32(std::ceil(vx1)));
+        y1 = std::min(y1, s32(std::ceil(vy1)));
+    }
+    x0 = std::max(x0, 0);
+    y0 = std::max(y0, 0);
+    return vk::Rect2D{.offset = {x0, y0},
+                      .extent = {u32(std::max(x1 - x0, 0)), u32(std::max(y1 - y0, 0))}};
+}
+} // namespace
+
+void Rasterizer::RecordPartialClear() {
+    if (!partial_clear.depth && !partial_clear.stencil) {
+        return;
+    }
+    const PartialClear clear = partial_clear;
+    partial_clear = {};
+    scheduler.Record([clear](vk::CommandBuffer cmdbuf) {
+        vk::ImageAspectFlags aspect{};
+        if (clear.depth) aspect |= vk::ImageAspectFlagBits::eDepth;
+        if (clear.stencil) aspect |= vk::ImageAspectFlagBits::eStencil;
+        const vk::ClearAttachment attachment{
+            .aspectMask = aspect,
+            .clearValue = vk::ClearValue{.depthStencil = vk::ClearDepthStencilValue{
+                                             .depth = clear.depth_value,
+                                             .stencil = clear.stencil_value}},
+        };
+        const vk::ClearRect rect{.rect = clear.rect, .baseArrayLayer = 0, .layerCount = 1};
+        cmdbuf.clearAttachments(attachment, rect);
+    });
+}
+
 RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
     // bbport: RenderStateMemo (see BeginMemo).
     const bool memo_on = !BbToggle::Disabled(BbToggle::RenderStateMemo) && !FrameCapture::Active();
@@ -4028,7 +4101,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
             is_meta_cleared;
         // A fast clear through HTILE clears the stencil too, unless the stencil isn't tiled.
         const bool is_stencil_clear =
-            regs.depth_render_control.stencil_clear_enable ||
+            (regs.depth_render_control.stencil_clear_enable && !MaskedStencilClear(regs)) ||
             (is_meta_cleared && regs.depth_buffer.z_info.tile_surface_enable &&
              !regs.depth_buffer.stencil_info.tile_stencil_disable);
         texture_cache.TouchMeta(htile_address, slice, false);
@@ -4062,15 +4135,49 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         attachment.clear_value = {};
         attachment.is_clear = 0;
 
+        // bbport: a register clear (not an HTILE fast clear) whose scissor covers only part of
+        // the target becomes a rectangle clear (BB_PARTIAL_DEPTH_CLEAR=0: whole-image clear).
+        partial_clear = {};
+        {
+            static const bool partial_enabled = [] {
+                const char* env = std::getenv("BB_PARTIAL_DEPTH_CLEAR");
+                return !(env && env[0] == '0');
+            }();
+            const bool reg_depth_clear = regs.depth_render_control.depth_clear_enable &&
+                                         regs.depth_control.depth_enable &&
+                                         regs.depth_control.depth_write_enable && !is_meta_cleared;
+            const bool reg_stencil_clear = regs.depth_render_control.stencil_clear_enable &&
+                                           !MaskedStencilClear(regs) && !is_meta_cleared;
+            if (partial_enabled && (reg_depth_clear || reg_stencil_clear) &&
+                target_scale[0] == 1.0f && target_scale[1] == 1.0f) {
+                const vk::Rect2D rect = CurrentScissor0(regs);
+                const bool whole = rect.offset.x == 0 && rect.offset.y == 0 &&
+                                   rect.extent.width >= image.info.size.width &&
+                                   rect.extent.height >= image.info.size.height;
+                if (!whole && rect.extent.width && rect.extent.height) {
+                    const u32 w = image.info.size.width, h = image.info.size.height;
+                    vk::Rect2D r = rect;
+                    r.extent.width = std::min<u32>(r.extent.width, w - std::min<u32>(r.offset.x, w));
+                    r.extent.height = std::min<u32>(r.extent.height, h - std::min<u32>(r.offset.y, h));
+                    partial_clear.depth = reg_depth_clear && regs.depth_buffer.DepthValid();
+                    partial_clear.stencil = reg_stencil_clear && regs.depth_buffer.StencilValid();
+                    partial_clear.depth_value = regs.depth_clear;
+                    partial_clear.stencil_value = regs.stencil_clear;
+                    partial_clear.rect = r;
+                }
+            }
+        }
         if (regs.depth_buffer.DepthValid()) {
-            attachment.clear_value[0] = is_depth_clear ? std::bit_cast<u32>(regs.depth_clear) : 0u;
+            const bool clear_now = is_depth_clear && !partial_clear.depth;
+            attachment.clear_value[0] = clear_now ? std::bit_cast<u32>(regs.depth_clear) : 0u;
             attachment.has_depth = true;
-            attachment.depth_clear = is_depth_clear;
+            attachment.depth_clear = clear_now;
         }
         if (regs.depth_buffer.StencilValid()) {
-            attachment.clear_value[1] = is_stencil_clear ? regs.stencil_clear : 0u;
+            const bool stencil_now = is_stencil_clear && !partial_clear.stencil;
+            attachment.clear_value[1] = stencil_now ? regs.stencil_clear : 0u;
             attachment.has_stencil = true;
-            attachment.stencil_clear = is_stencil_clear;
+            attachment.stencil_clear = stencil_now;
         }
 
         if (reduced) {
@@ -4785,6 +4892,22 @@ void Rasterizer::DumpSampled() {
     pending_dumps.clear();
 }
 
+namespace {
+/// bbport: a stencil clear (DB_RENDER_CONTROL.STENCIL_CLEAR_ENABLE) whose stencil write mask
+/// covers only some bits. Tomb Raider resets its light-volume bits (mask 0x7) this way before
+/// each deferred light and keeps the 0x80 tag; a Vulkan attachment clear would wipe all 8 bits,
+/// so such a draw writes through its own stencil ops instead. BB_MASKED_STENCIL_CLEAR=0: off.
+bool MaskedStencilClear(const AmdGpu::Regs& regs) {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_MASKED_STENCIL_CLEAR");
+        return !(env && env[0] == '0');
+    }();
+    return enabled && regs.depth_render_control.stencil_clear_enable &&
+           regs.depth_control.stencil_enable &&
+           regs.stencil_ref_front.stencil_write_mask != 0xff;
+}
+} // namespace
+
 void Rasterizer::UpdateDepthStencilState() const {
     const auto& regs = Regs();
     auto& dynamic_state = scheduler.GetDynamicState();
@@ -4832,7 +4955,8 @@ void Rasterizer::UpdateDepthStencilState() const {
         } : front_ops;
         dynamic_state.SetStencilOps(front_ops, back_ops);
 
-        const bool stencil_clear = regs.depth_render_control.stencil_clear_enable;
+        const bool stencil_clear =
+            regs.depth_render_control.stencil_clear_enable && !MaskedStencilClear(regs);
         const auto front = regs.stencil_ref_front;
         const auto back =
             regs.depth_control.backface_enable ? regs.stencil_ref_back : regs.stencil_ref_front;

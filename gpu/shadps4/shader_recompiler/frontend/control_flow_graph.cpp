@@ -165,6 +165,10 @@ void CFG::SplitDivergenceScopes() {
         // but also saves the previous value to restore later. This indicates
         // we are entering a scope.
         return inst.opcode == Opcode::S_AND_SAVEEXEC_B64 ||
+               // bbport: a plain AND into EXEC narrows the mask the same way (Tomb Raider's TressFX
+               // resolve: "s_and_b64 exec, s0, vcc" before each linked-list node load). Without
+               // the scope, lanes that EXEC turned off still load and overwrite their registers.
+               (inst.opcode == Opcode::S_AND_B64 && inst.dst[0].field == OperandField::ExecLo) ||
                // While this instruction does not save EXEC it is often used paired
                // with SAVEEXEC to mask the threads that didn't pass the condition
                // of initial branch.

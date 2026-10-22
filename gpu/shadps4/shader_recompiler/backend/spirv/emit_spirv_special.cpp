@@ -28,6 +28,16 @@ void ConvertDepthMode(EmitContext& ctx) {
     ctx.OpStore(ctx.output_position, vector);
 }
 
+// bbport: VTX_Z_FMT: the hardware takes the exported z as it is; Vulkan divides it by w.
+void UndoDepthDivide(EmitContext& ctx) {
+    const Id type{ctx.F32[1]};
+    const Id position{ctx.OpLoad(ctx.F32[4], ctx.output_position)};
+    const Id z{ctx.OpCompositeExtract(type, position, 2u)};
+    const Id w{ctx.OpCompositeExtract(type, position, 3u)};
+    const Id vector{ctx.OpCompositeInsert(ctx.F32[4], ctx.OpFMul(type, z, w), position, 2u)};
+    ctx.OpStore(ctx.output_position, vector);
+}
+
 void ConvertPositionToClipSpace(EmitContext& ctx) {
     ASSERT_MSG(!ctx.info.stores.GetAny(IR::Attribute::ViewportIndex),
                "Multi-viewport with shader clip space conversion not yet implemented.");
@@ -192,6 +202,9 @@ void EmitEpilogue(EmitContext& ctx) {
     }
     if (Sirit::ValidId(ctx.motion_frag_out)) {
         EmitFragmentMotion(ctx);
+    }
+    if (ctx.hw_stage == HwStage::Vertex && ctx.runtime_info.hw.vs.z_not_divided) {
+        UndoDepthDivide(ctx);
     }
     if (ctx.hw_stage == HwStage::Vertex &&
         ctx.runtime_info.hw.vs.emulate_depth_negative_one_to_one) {

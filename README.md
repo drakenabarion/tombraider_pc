@@ -28,14 +28,9 @@ comments still carry Virtual-On, Uncharted or Bloodborne names.
 
 Known problems (as of October 2026):
 
-- **TressFX hair flickers under dynamic lighting.** The hair is normally dark, as it should be,
-  but in some lighting situations the whole head of hair flickers to a silvery tone from frame
-  to frame. Likely in the hair shader's per-light path (shadow map, light falloff). See
-  `docs/HANDOFF.md`.
 - **Shader compilation stutter.** Each new shader compiles on first use; large parts of the game
   stutter until compiled. Run with `BB_PIPELINE_CACHE=0` for now (the cache is off while the port
   is being debugged).
-- **Lighting flicker** in caves where sunlight comes in.
 - **Rain:** a grey distortion line along the top edge of the screen.
 - **Packaging is not adapted yet:** `run.sh`, the launcher, the AppImage and the Windows build
   scripts are still Virtual-On's and do not work for this game. Use `run.py`.

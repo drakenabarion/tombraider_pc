@@ -110,6 +110,8 @@ struct HwVertexRuntimeInfo {
     std::array<OutputMap, 3> outputs;
     bool emulate_depth_negative_one_to_one{};
     bool clip_disable{};
+    /// bbport: PA_CL_VTE_CNTL.VTX_Z_FMT: the exported z is not divided by w (linear depth).
+    bool z_not_divided{};
     u32 user_clip_plane_mask{};
     /// bbport: object motion vectors (G-buffer draws), see MotionVectors below.
     bool motion_vectors{};
