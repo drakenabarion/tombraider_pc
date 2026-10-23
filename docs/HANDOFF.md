@@ -39,13 +39,14 @@ draws and bindings in `video_core/renderer_vulkan/vk_rasterizer.cpp`, shader tra
 `shader_recompiler/`), built into `out/gpu/libbbgpu.so`. **If you change the layout of
 `Shader::Info` or `RuntimeInfo`, bump the versions in `vk_pipeline_serialization.cpp`.**
 
-### Fixed in October 2026: TressFX hair and cave lighting
+### Fixed in October 2026: TressFX hair, cave lighting, lens flare
 
 TressFX runs as compute passes (simulation), then fill pass 2 (vs `f871bb9d932e79ab`,
 ps `aa7cd3c6214fb035`), which builds a per-pixel linked list (12-byte nodes: tangent, depth, next;
 counter in GDS[0]; heads table 1920x1080x4 bytes), then resolve pass 3 (ps `42d601c4e9788311`,
 low 32 bits `e9788311`), which walks each list, keeps the 8 nearest fragments and blends them
-into the scene target. Four separate bugs were behind the hair and cave lighting problems:
+into the scene target. Four separate bugs were behind the hair and cave lighting problems,
+and a fifth behind the lens flare outside:
 
 1. **Hair flicker (shader translator).** The resolve shader narrows EXEC with a plain
    `s_and_b64 exec, s0, vcc` before each node load. shadPS4's `CFG::SplitDivergenceScopes`
@@ -67,6 +68,16 @@ into the scene target. Four separate bugs were behind the hair and cave lighting
 4. **Light volumes (masked stencil clear).** Stencil clears with a partial write mask (the game
    resets bits 0x7 and keeps the 0x80 tag) wiped all 8 bits. They now go through the draw's own
    stencil ops (`MaskedStencilClear`; `BB_MASKED_STENCIL_CLEAR=0` turns it off).
+
+5. **Lens flare flicker outside (occlusion queries).** The sun flare's strength comes from
+   occlusion queries (two depth-only box draws at the sun). shadPS4 answered them with a
+   synthetic counter on the command thread, ahead of the DMA clear of the result block that runs
+   in order on the recording thread, so most results were wiped again; the game reads them a
+   frame later without waiting (`0x727130` in the eboot, `Flush` thread) and the flare switched
+   on and off. Now `Rasterizer::OcclusionSample` runs in order with the draws, counts the draws
+   between begin and end sample with precise Vulkan occlusion queries, and writes the visible
+   count into the result block when the GPU is done. The flare also fades correctly behind
+   objects now (`BB_OCCLUSION_QUERIES=0`: the old synthetic counter).
 
 The hair looks somewhat bright in dark scenes (the candle-lit cave after the opening). PS4 footage
 shows the same, so this is the original look. A darker hair would be an optional mod.
@@ -117,6 +128,7 @@ Linux and `packaging/windows/build-windows.bat` on Windows. The Virtual-On repo
 | `BB_DUMP_SHADERS=1` | Shader IR dumps to `user/shader/dumps` (cache must be off) |
 | `BB_PATCH_SHADERS=1` | Load SPIR-V replacements from `user/shader/patch` |
 | `BB_VTX_Z_FMT=0`, `BB_PARTIAL_DEPTH_CLEAR=0`, `BB_MASKED_STENCIL_CLEAR=0` | Turn off the October 2026 depth/stencil fixes (for comparison) |
+| `BB_OCCLUSION_QUERIES=0` | Synthetic occlusion results instead of real queries (for comparison) |
 | `BB_SKIP_SHADERS=<hashes>` | Skip draws with those shaders |
 | `BB_TOGGLE_FILE=<file>` | Live renderer toggles (bits in `gpu/shim/bbport_toggles.h`) |
 | `BB_CAPTURE_TRIGGER/BY_FLIP/DIR` | Frame captures |

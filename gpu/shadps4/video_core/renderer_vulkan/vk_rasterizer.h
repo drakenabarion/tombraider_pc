@@ -101,6 +101,11 @@ public:
     /// thread while the draw pipeline is in use (PipelinedTasks), else here after a drain.
     using OrderedTask = void (*)(Rasterizer& rasterizer, const u8* data);
     /// Returns true when the task was handed to the recording thread (not run yet).
+    /// bbport: a ZPASS_DONE sample at `address`, in order with the draws. A begin sample (16-byte
+    /// aligned) opens an occlusion query and its end sample (8 bytes later) closes it; the draws
+    /// in between are counted with Vulkan occlusion queries, and the visible sample count is
+    /// written to the guest's result block (`num_pairs` begin/end pairs) once the GPU ran them.
+    void OcclusionSample(VAddr address, u32 num_pairs);
     bool RunInOrder(OrderedTask task, const void* data, u32 size,
                     u64 toggle = BbToggle::PipelinedTasks);
     /// Stage A: the draw pipe position after the last handed-over packet, and whether the
@@ -357,6 +362,17 @@ private:
         vk::Rect2D rect{};
     };
     PartialClear partial_clear{};
+    /// bbport: occlusion queries (OcclusionSample). The pool is a ring; a slot is reset on the
+    /// host when it is taken, long after the GPU last used it.
+    static constexpr u32 OcclusionSlots = 16384;
+    vk::UniqueQueryPool occlusion_pool;
+    bool occlusion_precise = false;
+    bool occlusion_counting = false;
+    VAddr occlusion_block = 0;
+    u32 occlusion_next = 0;
+    std::vector<u32> occlusion_slots;
+    /// The query slot for the draw being recorded, or ~0u outside an occlusion query.
+    u32 OcclusionSlotForDraw();
     void RecordPartialClear();
     std::array<float, 2> target_scale{1.0f, 1.0f}; ///< pass drawn into the upscaler's output-size images
     const bool host_markers_enabled;

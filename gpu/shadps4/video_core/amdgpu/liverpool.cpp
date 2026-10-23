@@ -362,6 +362,13 @@ void RunDmaData(Vulkan::Rasterizer& rasterizer, const u8* data) {
     }
 }
 
+// bbport: a ZPASS_DONE sample (EVENT_WRITE PixelPipeStatDump), see Rasterizer::OcclusionSample.
+void RunOcclusionSample(Vulkan::Rasterizer& rasterizer, const u8* data) {
+    const auto* event = reinterpret_cast<const PM4CmdEventWrite*>(data);
+    static const u32 num_pairs = Libraries::Kernel::sceKernelIsNeoMode() ? 16 : 8;
+    rasterizer.OcclusionSample(event->Address<VAddr>(), num_pairs);
+}
+
 void SignalFlip(Vulkan::Rasterizer& rasterizer, const u8*) {
     rasterizer.WaitDeferredSignals();
     rasterizer.OnGuestFlip();
@@ -1171,7 +1178,19 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 if (event->event_type.Value() == EventType::SoVgtStreamoutFlush) {
                     // registers: ApplyGraphicsRegisterPacket
                 } else if (event->event_index.Value() == EventIndex::ZpassDone) {
-                    if (event->event_type.Value() == EventType::PixelPipeStatDump) {
+                    // bbport: real occlusion queries (Rasterizer::OcclusionSample), in order with
+                    // the draws and the DMA clears of the result block. BB_OCCLUSION_QUERIES=0:
+                    // shadPS4's synthetic counter (every query fully visible, written at once).
+                    static const bool real_queries = [] {
+                        const char* env = std::getenv("BB_OCCLUSION_QUERIES");
+                        return !(env && env[0] == '0');
+                    }();
+                    if (event->event_type.Value() == EventType::PixelPipeStatDump && rasterizer &&
+                        real_queries) {
+                        rasterizer->RunInOrder(&RunOcclusionSample, header,
+                                               sizeof(PM4CmdEventWrite) + 2 * sizeof(u32),
+                                               BbToggle::PipelinedMemoryWrites);
+                    } else if (event->event_type.Value() == EventType::PixelPipeStatDump) {
                         static constexpr u64 OcclusionCounterValidMask = 0x8000000000000000ULL;
                         static constexpr u64 OcclusionCounterStep = 0x2FFFFFFULL;
                         u64* results = event->Address<u64*>();

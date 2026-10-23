@@ -1599,15 +1599,26 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         checkpoint = NoteCheckpoint("draw", vs_info.pgm_hash, ps ? ps->pgm_hash : 0, num_indices,
                                     num_instances, 0, 0);
     }
+    const u32 occlusion_slot = OcclusionSlotForDraw();
+    const vk::QueryPool occlusion_pool_handle =
+        occlusion_slot != ~0u ? *occlusion_pool : vk::QueryPool{};
+    const vk::QueryControlFlags occlusion_flags =
+        occlusion_precise ? vk::QueryControlFlagBits::ePrecise : vk::QueryControlFlags{};
     scheduler.Record([=](vk::CommandBuffer cmdbuf) {
         if (checkpoint) {
             cmdbuf.setCheckpointNV(checkpoint);
         }
         cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, handle);
+        if (occlusion_slot != ~0u) {
+            cmdbuf.beginQuery(occlusion_pool_handle, occlusion_slot, occlusion_flags);
+        }
         if (is_indexed) {
             cmdbuf.drawIndexed(num_indices, num_instances, 0, s32(first_vertex), first_instance);
         } else {
             cmdbuf.draw(num_indices, num_instances, first_vertex, first_instance);
+        }
+        if (occlusion_slot != ~0u) {
+            cmdbuf.endQuery(occlusion_pool_handle, occlusion_slot);
         }
     });
     if (upscaler->Enabled() && cb_descs[0].first) {
@@ -1790,11 +1801,19 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
                                     ps ? ps->pgm_hash : 0, max_count, stride,
                                     count_address != 0, indirect.args);
     }
+    const u32 occlusion_slot = OcclusionSlotForDraw();
+    const vk::QueryPool occlusion_pool_handle =
+        occlusion_slot != ~0u ? *occlusion_pool : vk::QueryPool{};
+    const vk::QueryControlFlags occlusion_flags =
+        occlusion_precise ? vk::QueryControlFlagBits::ePrecise : vk::QueryControlFlags{};
     scheduler.Record([=](vk::CommandBuffer cmdbuf) {
         if (checkpoint) {
             cmdbuf.setCheckpointNV(checkpoint);
         }
         cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, handle);
+        if (occlusion_slot != ~0u) {
+            cmdbuf.beginQuery(occlusion_pool_handle, occlusion_slot, occlusion_flags);
+        }
         if (is_indexed) {
             if (counts) {
                 cmdbuf.drawIndexedIndirectCount(args, args_offset, counts, counts_offset, max_count,
@@ -1806,6 +1825,9 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
             cmdbuf.drawIndirectCount(args, args_offset, counts, counts_offset, max_count, stride);
         } else {
             cmdbuf.drawIndirect(args, args_offset, max_count, stride);
+        }
+        if (occlusion_slot != ~0u) {
+            cmdbuf.endQuery(occlusion_pool_handle, occlusion_slot);
         }
     });
     DebugState.IncDrawCall();
@@ -3849,6 +3871,71 @@ vk::Rect2D CurrentScissor0(const AmdGpu::Regs& regs) {
                       .extent = {u32(std::max(x1 - x0, 0)), u32(std::max(y1 - y0, 0))}};
 }
 } // namespace
+
+u32 Rasterizer::OcclusionSlotForDraw() {
+    if (!occlusion_counting || !occlusion_pool) {
+        return ~0u;
+    }
+    const u32 slot = occlusion_next++ % OcclusionSlots;
+    instance.GetDevice().resetQueryPool(*occlusion_pool, slot, 1);
+    occlusion_slots.push_back(slot);
+    return slot;
+}
+
+void Rasterizer::OcclusionSample(VAddr address, u32 num_pairs) {
+    const VAddr block = address & ~VAddr(0xf);
+    if ((address & 0xf) == 0) {
+        if (!occlusion_pool) {
+            const vk::QueryPoolCreateInfo info = {
+                .queryType = vk::QueryType::eOcclusion,
+                .queryCount = OcclusionSlots,
+            };
+            occlusion_pool =
+                Check<"create occlusion query pool">(instance.GetDevice().createQueryPoolUnique(info));
+            instance.GetDevice().resetQueryPool(*occlusion_pool, 0, OcclusionSlots);
+            occlusion_precise = instance.GetPhysicalDevice().getFeatures().occlusionQueryPrecise;
+        }
+        occlusion_counting = true;
+        occlusion_block = block;
+        occlusion_slots.clear();
+        return;
+    }
+    std::vector<u32> slots;
+    if (occlusion_counting && occlusion_block == block) {
+        slots = std::move(occlusion_slots);
+    }
+    occlusion_counting = false;
+    occlusion_slots.clear();
+    // The GPU (graphics) writes the sample counts on the PS4: num_pairs begin/end pairs of
+    // 64-bit counters, bit 63 marking a written value. The visible count goes into the first
+    // pair; the others count nothing.
+    num_pairs = std::min<u32>(num_pairs, 16);
+    scheduler.DeferPriorityOperation([device = instance.GetDevice(),
+                                      pool = occlusion_pool ? *occlusion_pool : vk::QueryPool{},
+                                      slots = std::move(slots), block, num_pairs,
+                                      memory = memory] {
+        u64 visible = 0;
+        for (const u32 slot : slots) {
+            u64 samples = 0;
+            const auto result = device.getQueryPoolResults(
+                pool, slot, 1, sizeof(samples), &samples, sizeof(samples),
+                vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
+            if (result == vk::Result::eSuccess) {
+                visible += samples;
+            }
+        }
+        static constexpr u64 Valid = 0x8000000000000000ULL;
+        std::array<u64, 32> words{};
+        for (u32 i = 0; i < num_pairs * 2; ++i) {
+            words[i] = Valid;
+        }
+        words[1] = visible | Valid;
+        const u64 bytes = u64(num_pairs) * 16;
+        if (!memory->TryWriteBacking(reinterpret_cast<void*>(block), words.data(), bytes)) {
+            std::memcpy(reinterpret_cast<void*>(block), words.data(), bytes);
+        }
+    });
+}
 
 void Rasterizer::RecordPartialClear() {
     if (!partial_clear.depth && !partial_clear.stencil) {
