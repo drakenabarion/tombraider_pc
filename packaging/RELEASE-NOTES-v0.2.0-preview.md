@@ -18,5 +18,6 @@ Boots, plays the intro videos with sound, and plays well past the first base cam
 
 ### Limitations
 - **Shader compilation:** shaders compile on first use, so a new area can hitch briefly. The pipeline cache is off in this build.
-- No Windows build yet. The launcher is adapted from the Virtual-On one (Uncharted lineage); some options there may not apply.
+- Linux only for now: a Windows build with these fixes follows (0.1.0's Windows zip is on the previous release).
+- The launcher is adapted from the Virtual-On one (Uncharted lineage); some options there may not apply.
 - Online features report offline.

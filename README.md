@@ -22,7 +22,8 @@ comments still carry Virtual-On, Uncharted or Bloodborne names.
 ## Status
 
 - Boots, plays the intro videos with sound, and plays well past the first base camp at 60 FPS.
-- There are no binary releases yet; build from source (below) and start with `run.py`.
+- Builds are on the GitHub Releases page (Linux AppImage; a Windows zip with 0.1.0), or build
+  from source (below) and start with `run.py`.
 
 ## Limitations
 
@@ -32,10 +33,10 @@ Known problems (as of October 2026):
   stutter until compiled. Run with `BB_PIPELINE_CACHE=0` for now (the cache is off while the port
   is being debugged).
 - `run.sh` is still Virtual-On's and does not work for this game. Use `run.py` (or the AppImage).
-- Windows: not released yet.
+- Windows: the 0.2.0 fixes are not in a Windows build yet (0.1.0 has one).
 - Online features report offline.
 
-Updates will be slow for a while: the maintainer has a busy few days ahead.
+Updates will be slow for a while: I have a busy few days ahead.
 
 ## Requirements
 
@@ -55,8 +56,8 @@ Vulkan and SDL3, FFmpeg, protobuf, OpenSSL, zlib and miniupnpc). With `DLSS_SDK_
 checkout of the [NVIDIA DLSS SDK](https://github.com/NVIDIA/DLSS), it also builds the optional
 DLSS bridge.
 
-The Windows build path (MSYS2 CLANG64, `packaging/windows/`) is inherited from Virtual-On and
-has not been adapted or tested for this game.
+Windows builds use MSYS2 CLANG64 and `packaging/windows/` (see
+`packaging/windows/README-TombRaider.txt`).
 
 ## Running
 
@@ -67,8 +68,7 @@ BB_GAME_DIR=/path/to/CUSA00109 BB_PIPELINE_CACHE=0 python3 run.py
 ```
 
 `BB_GAME_DIR` is the base game with the 1.01 update copied over it. Saves and caches go to
-`user/`. Insert or L3+R3 opens the settings overlay. Do not use `run.sh` or the launcher yet
-(see Limitations).
+`user/`. Insert or L3+R3 opens the settings overlay. Do not use `run.sh` (see Limitations).
 
 ## Changes for Tomb Raider
 
