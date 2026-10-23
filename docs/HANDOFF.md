@@ -94,7 +94,8 @@ cube, no specular, tangent colours); rename one to `fs_0x42d601c4e9788311_0.spv`
 
 ### 1. Other visual bugs
 
-- Rain: grey distortion line along the top edge of the screen.
+None known (October 2026). The grey line along the top edge in rain is gone since the fixes
+above (heavy rain section checked); no separate cause was found.
 
 ### 2. Shader compilation stutter
 
