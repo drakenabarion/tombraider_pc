@@ -21,7 +21,7 @@ comments still carry Virtual-On, Uncharted or Bloodborne names.
 
 ## Status
 
-- Boots, plays the intro videos with sound, and plays through to the first base camp at 60 FPS.
+- Boots, plays the intro videos with sound, and plays well past the first base camp at 60 FPS.
 - There are no binary releases yet; build from source (below) and start with `run.py`.
 
 ## Limitations
@@ -31,9 +31,8 @@ Known problems (as of October 2026):
 - **Shader compilation stutter.** Each new shader compiles on first use; large parts of the game
   stutter until compiled. Run with `BB_PIPELINE_CACHE=0` for now (the cache is off while the port
   is being debugged).
-- **Packaging is not adapted yet:** `run.sh`, the launcher, the AppImage and the Windows build
-  scripts are still Virtual-On's and do not work for this game. Use `run.py`.
-- Windows is not built or tested.
+- `run.sh` is still Virtual-On's and does not work for this game. Use `run.py` (or the AppImage).
+- Windows: not released yet.
 - Online features report offline.
 
 Updates will be slow for a while: the maintainer has a busy few days ahead.

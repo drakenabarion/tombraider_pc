@@ -44,7 +44,7 @@ CONFIG_FILE = CONFIG_DIR / 'settings.json'
 NAME = 'Tomb Raider'
 AUTHOR = 'drakenabarion'
 # This build; GitHub release tags are v<VERSION> (their digits are compared).
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 RELEASES_API = 'https://api.github.com/repos/drakenabarion/tombraider_pc/releases/latest'
 RELEASES_PAGE = 'https://github.com/drakenabarion/tombraider_pc/releases/latest'
 UPDATE_DIR = Path(tempfile.gettempdir()) / 'tombraider-update'
@@ -349,6 +349,20 @@ def game_environment(s, start=None):
 BG, PANEL, SURFACE, CARD, LINE = '#0b0907', '#100d0a', '#14110d', '#1e1913', '#332b22'
 TEXT, MUTED, GOLD, GOLD_HI, GOLD_DIM = '#f5efe6', '#9c9286', '#d9a65c', '#f0c88a', '#8a6a3c'
 CARD_HI = '#202226'
+
+
+def tile_art():
+    """Virtual-On's tile renderer, set up for this game: the poster, warm palette, gold accent
+    (selection ring and caption) instead of Virtual-On's blue."""
+    import virtualon_art
+    virtualon_art.PALETTES.setdefault('game', ((14, 10, 6), (190, 120, 50), (220, 160, 90), (250, 225, 180), 7))
+    # The AppImage/exe ship the poster as art/game.jpg beside the frozen launcher; run from
+    # source, it is launcher/tombraider-poster.jpg (an absolute name: load_art's join keeps it).
+    poster = 'game.jpg' if getattr(sys, 'frozen', False) else \
+        str(Path(__file__).resolve().parent / 'tombraider-poster.jpg')
+    virtualon_art.POSTERS.setdefault('game', poster)
+    virtualon_art.ACCENT = tuple(int(GOLD[i:i + 2], 16) for i in (1, 3, 5))
+    return virtualon_art
 COLORS = {'surface': SURFACE, 'card': CARD, 'card_hi': CARD_HI, 'line': LINE, 'text': TEXT, 'muted': MUTED,
           'gold': GOLD, 'gold_hi': GOLD_HI, 'track': '#2c2e33', 'knob': '#9a958b', 'knob_on': '#f7f1e2',
           'button': '#25272b', 'button_hi': '#30333a'}
@@ -856,7 +870,7 @@ class Launcher:
             image = None
             try:
                 from PIL import ImageTk
-                import virtualon_art; virtualon_art.PALETTES.setdefault('game', ((14, 10, 6), (190, 120, 50), (220, 160, 90), (250, 225, 180), 7)); virtualon_art.POSTERS.setdefault('game', 'game.jpg')
+                virtualon_art = tile_art()
                 scene = virtualon_art.poster_tile(key, inner_w, inner_h, title, subtitle, selected=chosen,
                                                   hover=hot and not chosen, dimmed=not present, page=page)
                 image = ImageTk.PhotoImage(scene)
@@ -917,7 +931,7 @@ class Launcher:
     def cover_art(self, game_dir, side):
         try:
             from PIL import Image, ImageTk
-            import virtualon_art; virtualon_art.PALETTES.setdefault('game', ((14, 10, 6), (190, 120, 50), (220, 160, 90), (250, 225, 180), 7)); virtualon_art.POSTERS.setdefault('game', 'game.jpg')
+            virtualon_art = tile_art()
             art = virtualon_art.cover(game_dir)
             return ImageTk.PhotoImage(art.resize((side, side), Image.LANCZOS)) if art else None
         except Exception:
@@ -1542,7 +1556,7 @@ class Launcher:
                         added.append(title)
                     # Library pictures (cover, header, hero) from the game's poster.
                     try:
-                        import virtualon_art; virtualon_art.PALETTES.setdefault('game', ((14, 10, 6), (190, 120, 50), (220, 160, 90), (250, 225, 180), 7)); virtualon_art.POSTERS.setdefault('game', 'game.jpg')
+                        virtualon_art = tile_art()
                         virtualon_art.steam_artwork(self.app['game_dir'], config / 'grid',
                                                     bbport_steam.shortcut_id(f'"{exe}"', title), key)
                     except Exception:  # pictures are a nicety: the shortcut works without them
