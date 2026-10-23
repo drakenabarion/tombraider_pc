@@ -1,4 +1,4 @@
-**Preview build: Tomb Raider: Definitive Edition (PS4) running natively on Linux.** A proof of concept on a larger game, built on bbport → SuperMedo's Windows port → uncharted_pc → virtualon_pc, with shadPS4's video core. **No game files are included.**
+**Tomb Raider: Definitive Edition (PS4) running natively on Linux.** Built on bbport → SuperMedo's Windows port → uncharted_pc → virtualon_pc, with shadPS4's video core. **No game files are included.**
 
 ### What you need
 - Your own decrypted dump of CUSA00109 with the 1.01 update copied over it (the folder with `eboot.bin` and `sce_module`).
@@ -14,7 +14,7 @@ Make `Tomb-Raider-DE-x86_64.AppImage` executable and start it, set the game fold
 - **Rain:** the grey line along the top edge of the screen is gone.
 
 ### What works
-Boots, plays the intro videos with sound, and plays well past the first base camp at 60 FPS.
+The game plays normally at 60 FPS as far as it has been tested (well past the first base camp), with sound and videos.
 
 ### Limitations
 - **Shader compilation:** shaders compile on first use, so a new area can hitch briefly. The pipeline cache is off in this build.
