@@ -293,6 +293,10 @@ void FrameCapture::Sampled(const VideoCore::ImageInfo& info, bool storage) {
     }
 }
 
+u32 FrameCapture::PassCount() {
+    return state.load(std::memory_order_relaxed) == Recording ? u32(entries.size()) : 0;
+}
+
 void FrameCapture::Note(const char* text) {
     if (!entries.empty()) {
         entries.back().note += text;

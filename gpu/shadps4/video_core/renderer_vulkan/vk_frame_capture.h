@@ -44,6 +44,11 @@ public:
     /// Contents of a bound buffer (first 1 KiB), kept for small passes and a pass's first draw.
     static void Buffer(u64 stage_hash, u32 slot, VAddr address, const void* data, u64 size);
     static void Note(const char* text);
+    /// GPU thread: passes recorded so far (0 when not recording).
+    static u32 PassCount();
+    static bool IsRecording() {
+        return state.load(std::memory_order_relaxed) == 2; // Recording
+    }
 
 private:
     enum : u32 { Idle, Armed, Recording };

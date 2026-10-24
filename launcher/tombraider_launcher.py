@@ -323,7 +323,7 @@ def game_environment(s, start=None):
         env['BB_USER_NAME'] = str(s['player_name']).strip()
     env['BB_FULLSCREEN'] = '1' if s['fullscreen'] else '0'
     env['BB_PRESENT_MODE'] = s['present_mode']
-    env['BB_VBLANK_HZ'] = '60'  # the games are paced by the frame
+    env['BB_VBLANK_HZ'] = '0'  # frame rate: fps_limit in bbport.ini (Options > Display)
     env['BB_WINDOW_SIZE'] = str(s.get('window_size') or '1920x1080')
     env['BB_FSR1'] = '1' if s.get('scaler', 'fsr1') == 'fsr1' else '0'
     sharpening = str(s.get('sharpening') or 'off')

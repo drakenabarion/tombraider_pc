@@ -277,13 +277,17 @@ void runtime_set_guest_fpu(void) {
     __asm__ volatile("ldmxcsr %0" : : "m"(mxcsr));
     __asm__ volatile("fldcw %0" : : "m"(fpucw));
 }
+void runtime_hwbp_thread_start(void);
+void runtime_hwbp_thread_end(void);
 static void *host_start(void *p) {
     GuestThread *t=p;
     attach(t);
     set_host_name(t->name);
     runtime_set_guest_fpu();
+    runtime_hwbp_thread_start();
     if (t->attr.affinity!=0x7f) apply_affinity(t,1);
     if (!exit_setjmp(t)) t->result=t->entry(t->argument);
+    runtime_hwbp_thread_end();
     runtime_thread_keys_cleanup();
     pthread_mutex_lock(&lock); t->finished=1; ++exited; pthread_mutex_unlock(&lock);
     return t->result;

@@ -133,7 +133,8 @@ def main():
     user_dir.mkdir(parents=True, exist_ok=True)
     # GPU caches (shaders, pipelines) beside the saves; read before main(), so set here.
     env.setdefault('BB_GPU_USER_DIR', str(user_dir))
-    env.setdefault('BB_VBLANK_HZ', '60')
+    # Fast vblank: the frame rate is the fps_limit setting (bbport.ini, Options > Display).
+    env.setdefault('BB_VBLANK_HZ', '0')
     loadexec = out_root / 'loadexec.txt'
     env['BB_LOADEXEC_FILE'] = str(loadexec)
     guest_argv = None

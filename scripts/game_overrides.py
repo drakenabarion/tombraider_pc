@@ -18,10 +18,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import menu_patch  # noqa: E402
 import tiger  # noqa: E402
 
-# Patch, the PRIORITY0 entries whose Scaleform sections hold the movie. The main menu's movie
-# (Menus\MainMenu) is in two resources; both get the edited copy.
-PATCHES = [('mainmenu-quit.bbmenu', (0x0a1d4a56, 0xcd4d322e))]
-VERSION = 1
+# Patch, the PRIORITY0 entries whose Scaleform sections hold the movie (the main menu's is in two
+# resources; both get the edited copy).
+PATCHES = [('mainmenu-quit.bbmenu', (0x0a1d4a56, 0xcd4d322e)),
+           # Options > Display (the options movie): the port's settings rows
+           ('options-display.bbmenu', (0xc694569a,))]
+VERSION = 2
 
 
 def find_movie(game, source, entry_hash, sha1):
@@ -73,14 +75,15 @@ def main(argv):
     if (out / 'stamp.txt').is_file() and (out / 'stamp.txt').read_text().strip() == want:
         return 0
     shutil.rmtree(out, ignore_errors=True)
+    edits = []
     for name, hashes in PATCHES:
         patch = (here / 'menus' / name).read_bytes()
         original = find_movie(game, 'PRIORITY0', hashes[0], menu_patch.original_sha1(patch))
         if original is None:
             print(f'Game overrides: {name} does not fit this version of the game; the game runs unchanged')
             return 0
-        edited = menu_patch.apply(original, patch)
-        tiger.build_patch(game, out, original, edited, list(hashes))
+        edits.append((original, menu_patch.apply(original, patch), list(hashes)))
+    tiger.build_patch(game, out, edits)
     (out / 'stamp.txt').write_text(want + '\n')
     return 0
 

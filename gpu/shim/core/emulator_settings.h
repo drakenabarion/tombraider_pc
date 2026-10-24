@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <string>
 #include "common/types.h"
+#include "bbport_settings.h"
 
 u32 BbDisplayRefreshHz(); // bbgpu.cpp: primary display refresh rate, 60 when unknown
 
@@ -42,14 +43,15 @@ public:
         }();
         return value;
     }
-    /// Frames per second the present thread lets through; 0 = no limit. BB_FPS_LIMIT overrides.
+    /// Frames per second the present thread lets through; 0 = no limit. BB_FPS_LIMIT overrides;
+    /// otherwise, with the fast vblank, the fps_limit setting (bbport.ini, Options > Display),
+    /// read on every vblank so a menu change applies at once. A fixed BB_VBLANK_HZ: no limit.
     u32 GetFrameLimit() {
-        static const u32 value = [] {
-            const long limit = Number("BB_FPS_LIMIT", -1);
-            if (limit >= 0) return u32(limit);
-            return Number("BB_VBLANK_HZ", 60) > 0 ? 0u : std::min<u32>(BbDisplayRefreshHz(), 120);
-        }();
-        return value;
+        static const long forced = Number("BB_FPS_LIMIT", -1);
+        static const bool fixed_vblank = Number("BB_VBLANK_HZ", 60) > 0;
+        if (forced >= 0) return u32(forced);
+        if (fixed_vblank) return 0u;
+        return u32(std::max(0, BbSettings::Get().fps_limit.load(std::memory_order_relaxed)));
     }
     bool IsCopyGpuBuffers() { static const auto value = Flag("BB_COPY_GPU_BUFFERS", false); return value; }
     bool IsDirectMemoryAccessEnabled() { static const auto value = Flag("BB_DIRECT_MEMORY_ACCESS", false); return value; }

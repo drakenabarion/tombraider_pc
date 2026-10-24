@@ -152,11 +152,12 @@ def replace_movie(section, header_word2, old_movie, new_movie):
     return bytes(relocs), new_data
 
 
-def build_patch(game, out, old_movie, new_movie, hashes, source='PRIORITY0'):
+def build_patch(game, out, edits, source='PRIORITY0'):
     """PATCH0 with the given entries of `source` added the way the game's own patch does it: the
     entry is the original DRM header; sections that change are stored in PATCH0 (their location
     offset carries flag 0x80: "in the patch archive"), the others keep pointing at `source`.
-    Entry offsets in PATCH0's table carry the same flag."""
+    Entry offsets in PATCH0's table carry the same flag. edits: [(original movie, edited movie,
+    [entry hashes])]."""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     base = (Path(game) / 'PATCH0.000.tiger').read_bytes()
@@ -165,7 +166,7 @@ def build_patch(game, out, old_movie, new_movie, hashes, source='PRIORITY0'):
     handles = {}
     blob = bytearray(base)
     added = []
-    for want in hashes:
+    for old_movie, new_movie, want in ((o, n, h) for o, n, hashes in edits for h in hashes):
         e = next(x for x in entries if x[0] == want)
         head = bytearray(read_entry(game, source, e, handles))
         count = struct.unpack_from('<I', head, 0x18)[0]
@@ -245,8 +246,8 @@ def main(argv):
         print(f'{total} movies')
     elif command == 'patch':
         # tiger.py patch <game dir> PRIORITY0 <out dir> <original.gfx> <edited.gfx> <hash>...
-        build_patch(game, argv[3], Path(argv[4]).read_bytes(), Path(argv[5]).read_bytes(),
-                    [int(h, 16) for h in argv[6:]], archive)
+        build_patch(game, argv[3], [(Path(argv[4]).read_bytes(), Path(argv[5]).read_bytes(),
+                                     [int(h, 16) for h in argv[6:]])], archive)
     else:
         raise SystemExit(__doc__)
 

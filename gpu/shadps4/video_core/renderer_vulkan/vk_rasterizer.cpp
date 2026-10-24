@@ -3,6 +3,8 @@
 
 #include <chrono>
 #include <cmath>
+#include <array>
+#include <cstring>
 #include <format>
 #include <vector>
 #include <mutex>
@@ -35,6 +37,12 @@
 #include "video_core/renderer_vulkan/vk_shader_hle.h"
 #include "video_core/texture_cache/image_view.h"
 #include "video_core/texture_cache/texture_cache.h"
+
+extern "C" int runtime_memory_find(const void* pattern, size_t length, uintptr_t* out, int max);
+extern "C" void runtime_hwbp_arm(uintptr_t address);
+extern "C" int runtime_memory_find_floats(const float* target, int count, float relative, uintptr_t* out, int max);
+extern "C" int runtime_memory_find_floats_tol(const float* target, const float* relative, int count, uintptr_t* out, int max);
+extern "C" void runtime_hwbp_arm_list(const uintptr_t* addresses, int count);
 
 namespace Vulkan {
 
@@ -2899,6 +2907,32 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
         const auto slot = std::min<size_t>(trace_it - trace_hashes.begin(), traced.size() - 1);
         if (traced[slot].fetch_add(1, std::memory_order_relaxed) < trace_count) {
             const auto& cb0 = Regs().color_buffers[0];
+            {
+                // BB_TRACE_FIND_PGM=1: the shader's program address (register value: address
+                // >> 8) looked up in game memory, the game's shader record; watched with
+                // BB_TRACE_ARM=found.
+                const VAddr pgm = stage.ProgramBase();
+                std::printf("Trace %08x program at %#llx\n", u32(stage.pgm_hash),
+                            static_cast<unsigned long long>(pgm));
+                static const bool find_pgm = std::getenv("BB_TRACE_FIND_PGM") != nullptr;
+                static bool armed_pgm = false;
+                if (find_pgm && !armed_pgm) {
+                    armed_pgm = true;
+                    const u32 lo = u32(pgm >> 8);
+                    uintptr_t hits[64];
+                    const int n = runtime_memory_find(&lo, 4, hits, 64);
+                    std::printf("Trace %08x program register value %#x found at:", u32(stage.pgm_hash), lo);
+                    for (int k = 0; k < n; ++k) std::printf(" %#lx", (unsigned long)hits[k]);
+                    std::printf("\n");
+                    // Not the command buffers (0x1048..0x104b: copies the GPU reads).
+                    uintptr_t records[4];
+                    int k = 0;
+                    for (int h = 0; h < n && k < 4; ++h) {
+                        if (hits[h] < 0x1048000000ull || hits[h] >= 0x104b000000ull) records[k++] = hits[h];
+                    }
+                    if (k) runtime_hwbp_arm_list(records, k);
+                }
+            }
             std::printf("Trace %08x render target 0: at 0x%llx %ux%u format %u tile %u\n",
                         u32(stage.pgm_hash), static_cast<unsigned long long>(cb0.Address()),
                         u32(cb0.Pitch()), u32(cb0.Height()), u32(cb0.info.format),
@@ -2947,6 +2981,278 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                     }
                 }
                 std::printf("\n");
+                // BB_TRACE_FIND=<buffer index>: where else in guest memory the first 12 bytes
+                // of that buffer are (the game data the constants were copied from).
+                // BB_TRACE_NEAR=<buffer>[:<word>]: places holding 3 floats within 5% of those
+                // (a source the game updates each frame); first 5 traces.
+                static const std::pair<int, u32> near_at = [] {
+                    const char* env = std::getenv("BB_TRACE_NEAR");
+                    if (!env) return std::pair<int, u32>{-1, 0};
+                    const char* colon = std::strchr(env, ':');
+                    return std::pair<int, u32>{std::atoi(env), colon ? u32(std::atoi(colon + 1)) : 0u};
+                }();
+                static u32 near_traces = 0;
+                if (int(i) == near_at.first && v.base_address && near_traces < 5 &&
+                    memory->IsValidGpuMapping(v.base_address + near_at.second * 4, 12)) {
+                    ++near_traces;
+                    const auto* t = reinterpret_cast<const float*>(v.base_address + near_at.second * 4);
+                    uintptr_t hits[64];
+                    const int n = runtime_memory_find_floats(t, 3, 0.05f, hits, 64);
+                    std::printf("Trace %08x buffer %u near %g %g %g at:", u32(stage.pgm_hash), i, t[0], t[1], t[2]);
+                    for (int h = 0; h < n; ++h) {
+                        if (hits[h] < 0x1048000000ull || hits[h] >= 0x104b000000ull) {
+                            std::printf(" %#lx", (unsigned long)hits[h]);
+                        }
+                    }
+                    std::printf("\n");
+                }
+                // BB_TRACE_TIMER=<buffer>:<word>: the game's time/frame-time pair (game time within
+                // 1%, frame time within 15%) looked up once, outside the command buffers; read
+                // and write watchpoints armed on up to four places (BB_HWBP_READS=1).
+                static const std::pair<int, u32> timer_at = [] {
+                    const char* env = std::getenv("BB_TRACE_TIMER");
+                    if (!env) return std::pair<int, u32>{-1, 0};
+                    const char* colon = std::strchr(env, ':');
+                    return std::pair<int, u32>{std::atoi(env), colon ? u32(std::atoi(colon + 1)) : 0u};
+                }();
+                static bool timer_done = false;
+                if (int(i) == timer_at.first && v.base_address && !timer_done &&
+                    memory->IsValidGpuMapping(v.base_address + timer_at.second * 4, 8)) {
+                    timer_done = true;
+                    const auto* t = reinterpret_cast<const float*>(v.base_address + timer_at.second * 4);
+                    const float tol[2] = {0.01f, 0.15f};
+                    uintptr_t hits[64];
+                    const int n = runtime_memory_find_floats_tol(t, tol, 2, hits, 64);
+                    uintptr_t keep[4];
+                    int k = 0;
+                    std::printf("Trace %08x timer %g %g at:", u32(stage.pgm_hash), t[0], t[1]);
+                    for (int h = 0; h < n; ++h) {
+                        if (hits[h] >= 0x1048000000ull && hits[h] < 0x104b000000ull) continue;
+                        std::printf(" %#lx", (unsigned long)hits[h]);
+                        if (k < 4) keep[k++] = hits[h] + 4; // the frame time
+                    }
+                    std::printf("\n");
+                    if (k) runtime_hwbp_arm_list(keep, k);
+                }
+                // BB_TRACE_FIND_PTR=<buffer>: where game memory holds that buffer's address (low
+                // 32 bits, a V# or a pointer the game rewrites every frame), outside the
+                // per-frame command buffers; write watchpoints armed there (first trace only).
+                static const int find_ptr = [] {
+                    const char* env = std::getenv("BB_TRACE_FIND_PTR");
+                    return env ? std::atoi(env) : -1;
+                }();
+                static bool ptr_armed = false;
+                if (int(i) == find_ptr && v.base_address && !ptr_armed) {
+                    ptr_armed = true;
+                    const u32 low = u32(v.base_address);
+                    uintptr_t hits[64];
+                    const int n = runtime_memory_find(&low, 4, hits, 64);
+                    uintptr_t keep[4];
+                    int k = 0;
+                    std::printf("Trace %08x buffer %u address %#x held at:", u32(stage.pgm_hash), i, low);
+                    for (int h = 0; h < n; ++h) {
+                        std::printf(" %#lx", (unsigned long)hits[h]);
+                        if (k < 4 && (hits[h] < 0x1048000000ull || hits[h] >= 0x104b000000ull)) keep[k++] = hits[h];
+                    }
+                    std::printf("\n");
+                    if (k) runtime_hwbp_arm_list(keep, k);
+                }
+                // BB_TRACE_FIND=<buffer>[:<word>]: 12 bytes from that word on.
+                static const std::pair<int, u32> find_at = [] {
+                    const char* env = std::getenv("BB_TRACE_FIND");
+                    if (!env) return std::pair<int, u32>{-1, 0};
+                    const char* colon = std::strchr(env, ':');
+                    return std::pair<int, u32>{std::atoi(env), colon ? u32(std::atoi(colon + 1)) : 0u};
+                }();
+                const VAddr find_address = v.base_address + find_at.second * 4;
+                if (int(i) == find_at.first && v.base_address &&
+                    memory->IsValidGpuMapping(find_address, 12)) {
+                    uintptr_t hits[16];
+                    static const bool scan = [] {
+                        const char* a = std::getenv("BB_TRACE_ARM");
+                        return !(a && std::strcmp(a, "common") == 0);
+                    }();
+                    const int n = scan ? runtime_memory_find(reinterpret_cast<const void*>(find_address),
+                                                             12, hits, 16)
+                                       : 0;
+                    // BB_TRACE_ARM=1: watch writes to this slot (a later frame reuses it);
+                    // BB_TRACE_ARM=found: to the first four other places the bytes were found.
+                    static const char* arm = std::getenv("BB_TRACE_ARM");
+                    // BB_TRACE_ARM=common: the four slots the buffer used most in 60 traces.
+                    static std::map<VAddr, u32> slot_counts;
+                    static u32 slot_traces = 0;
+                    if (arm && std::strcmp(arm, "common") == 0) {
+                        // Rearmed every 60 traces from trace 300 (the menu is steady by then),
+                        // with that window's most used slots.
+                        if (++slot_traces >= 300) ++slot_counts[find_address];
+                        if (slot_traces >= 360 && slot_traces % 60 == 0) {
+                            std::vector<std::pair<u32, VAddr>> order;
+                            for (const auto& [a, c] : slot_counts) order.emplace_back(c, a);
+                            std::sort(order.rbegin(), order.rend());
+                            uintptr_t top[4];
+                            int k = 0;
+                            for (const auto& [c, a] : order) {
+                                if (k == 4) break;
+                                std::printf("Trace slot %#llx used %u times\n",
+                                            static_cast<unsigned long long>(a), c);
+                                top[k++] = a;
+                            }
+                            runtime_hwbp_arm_list(top, k);
+                            slot_counts.clear();
+                        }
+                    } else if (arm && std::strcmp(arm, "found") == 0) {
+                        uintptr_t others[4];
+                        int k = 0;
+                        for (int h = 0; h < n && k < 4; ++h) {
+                            if (hits[h] != find_address) others[k++] = hits[h];
+                        }
+                        if (k) runtime_hwbp_arm_list(others, k);
+                    } else if (arm) {
+                        runtime_hwbp_arm(find_address);
+                    }
+                    std::printf("Trace %08x buffer %u found at:", u32(stage.pgm_hash), i);
+                    for (int k = 0; k < n; ++k) {
+                        if (hits[k] != find_address) std::printf(" %#lx", (unsigned long)hits[k]);
+                    }
+                    std::printf("\n");
+                }
+            }
+            // BB_TRACE_PEEK=<hex address>:<floats>: game memory printed with every trace.
+            static const std::pair<VAddr, u32> peek = [] {
+                const char* env = std::getenv("BB_TRACE_PEEK");
+                if (!env) return std::pair<VAddr, u32>{0, 0};
+                char* end{};
+                const VAddr a = VAddr(std::strtoull(env, &end, 16));
+                return std::pair<VAddr, u32>{a, end && *end == ':' ? u32(std::atoi(end + 1)) : 64u};
+            }();
+            if (peek.first && memory->IsValidGpuMapping(peek.first, peek.second * 4)) {
+                const auto* words = reinterpret_cast<const float*>(peek.first);
+                std::printf("Trace %08x peek %#llx:", u32(stage.pgm_hash),
+                            static_cast<unsigned long long>(peek.first));
+                for (u32 w = 0; w < peek.second; ++w) {
+                    std::printf(" %g", words[w]);
+                }
+                std::printf("\n");
+            }
+            // BB_TRACE_FROZEN_BUF=<buffer>:<word>[,<word>...]: snapshots (every 20 traces, up to
+            // trace 600) of 12 bytes at those words of that traced buffer (the per-frame copy the
+            // GPU reads, always current), each looked up in game memory; at traces 1000 and 1150,
+            // the places still holding an old snapshot (a copy that stopped updating).
+            {
+                struct Key { int buffer; u32 word; };
+                static const std::vector<Key> keys = [] {
+                    std::vector<Key> out;
+                    const char* env = std::getenv("BB_TRACE_FROZEN_BUF");
+                    if (!env) return out;
+                    const int buffer = std::atoi(env);
+                    for (const char* p = std::strchr(env, ':'); p && *p;) {
+                        ++p;
+                        out.push_back({buffer, u32(std::atoi(p))});
+                        p = std::strchr(p, ',');
+                    }
+                    return out;
+                }();
+                struct Snapshot {
+                    u32 key;
+                    std::array<u8, 12> value;
+                    std::vector<uintptr_t> places;
+                    u32 trace;
+                };
+                static std::vector<Snapshot> snapshots;
+                static u32 traces = 0;
+                if (!keys.empty() && u32(keys[0].buffer) < stage.buffers.size()) {
+                    const auto fb = prepared ? prepared->buffer_sharps[keys[0].buffer]
+                                             : stage.buffers[keys[0].buffer].GetSharp(stage);
+                    ++traces;
+                    static std::array<float, 3> first_camera{};
+                    // BB_TRACE_VIEWDUMP=1: after the view object is known, its first 0xf00 bytes
+                    // every 20 traces.
+                    static uintptr_t view_object = 0;
+                    static const bool view_dump = std::getenv("BB_TRACE_VIEWDUMP") != nullptr;
+                    if (view_dump && view_object && traces % 20 == 0 &&
+                        memory->IsValidGpuMapping(view_object, 0xf00)) {
+                        const auto* w = reinterpret_cast<const float*>(view_object);
+                        std::printf("View %u:", traces);
+                        for (u32 i2 = 0; i2 < 0xf00 / 4; ++i2) std::printf(" %g", w[i2]);
+                        std::printf("\n");
+                    }
+                    static std::vector<uintptr_t> to_watch;
+                    for (u32 k = 0; k < keys.size(); ++k) {
+                        const VAddr at = fb.base_address + keys[k].word * 4;
+                        if (!memory->IsValidGpuMapping(at, 12)) continue;
+                        if (traces == 1 && k == 0) {
+                            std::memcpy(first_camera.data(), reinterpret_cast<const void*>(at), 12);
+                        }
+                        if (traces <= 600 && traces % 60 == 0) {
+                            Snapshot snap{};
+                            snap.key = k;
+                            std::memcpy(snap.value.data(), reinterpret_cast<const void*>(at), 12);
+                            snap.trace = traces;
+                            snap.places.resize(4096);
+                            // Approximate (BB_TRACE_FROZEN_TOL, absolute, default 0.001): the game
+                            // is a frame ahead of the copy the GPU reads.
+                            static const float tol = [] {
+                                const char* env = std::getenv("BB_TRACE_FROZEN_TOL");
+                                return env ? float(std::atof(env)) : 0.001f;
+                            }();
+                            const float tols[3] = {-tol, -tol, -tol};
+                            snap.places.resize(runtime_memory_find_floats_tol(
+                                reinterpret_cast<const float*>(snap.value.data()), tols, 3,
+                                snap.places.data(), 4096));
+                            std::erase_if(snap.places, [](uintptr_t p) {
+                                return p >= 0x1048000000ull && p < 0x104b000000ull;
+                            });
+                            std::printf("Frozen: word %u trace %u: %zu places\n", keys[k].word,
+                                        traces, snap.places.size());
+                            snapshots.push_back(std::move(snap));
+                        } else if (traces == 1000 || traces == 1150) {
+                            for (const auto& snap : snapshots) {
+                                if (snap.key != k) continue;
+                                std::printf("Frozen: trace %u word %u from trace %u still at:", traces,
+                                            keys[k].word, snap.trace);
+                                const auto* old_v = reinterpret_cast<const float*>(snap.value.data());
+                                const auto* now_v = reinterpret_cast<const float*>(at);
+                                for (const uintptr_t p : snap.places) {
+                                    if (!memory->IsValidGpuMapping(p, 12)) continue;
+                                    const auto* v = reinterpret_cast<const float*>(p);
+                                    bool old_match = true, now_match = true;
+                                    for (int c = 0; c < 3; ++c) {
+                                        old_match &= std::abs(v[c] - old_v[c]) <= 0.001f;
+                                        now_match &= std::abs(v[c] - now_v[c]) <= 0.003f;
+                                    }
+                                    if (old_match && !now_match) {
+                                        std::printf(" %#lx(%g %g %g)", (unsigned long)p, v[0], v[1], v[2]);
+                                        // BB_TRACE_FROZEN_WATCH=1: read/write watchpoints on these
+                                        // (not the start camera: equal to the first trace's value).
+                                        // BB_TRACE_FROZEN_SKIP=<float>: a first value to leave
+                                        // out (the start camera's copies).
+                                        static const float skip = [] {
+                                            const char* env = std::getenv("BB_TRACE_FROZEN_SKIP");
+                                            return env ? float(std::atof(env)) : 1e30f;
+                                        }();
+                                        const bool start = !std::memcmp(v, first_camera.data(), 12) ||
+                                                           std::abs(v[0] - skip) < 1e-6f;
+                                        // The first start-camera copy is at view + 0x70 (the view
+                                        // object 0x75a2e0 builds the per-frame block from).
+                                        if (std::abs(v[0] - skip) < 1e-6f && !view_object) {
+                                            view_object = p - 0x70;
+                                            std::printf("Frozen: view object at %#lx\n", (unsigned long)view_object);
+                                        }
+                                        if (!start && to_watch.size() < 4 &&
+                                            std::find(to_watch.begin(), to_watch.end(), p) == to_watch.end()) {
+                                            to_watch.push_back(p);
+                                        }
+                                    }
+                                }
+                                std::printf("\n");
+                            }
+                            static const bool watch = std::getenv("BB_TRACE_FROZEN_WATCH") != nullptr;
+                            if (watch && traces == 1000 && k + 1 == keys.size() && !to_watch.empty()) {
+                                runtime_hwbp_arm_list(to_watch.data(), int(to_watch.size()));
+                            }
+                        }
+                    }
+                }
             }
             const auto ud = stage.UserData();
             std::printf("Trace %08x user data:", u32(stage.pgm_hash));
@@ -3134,6 +3440,25 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                                       ForceUploadVs(false) == u32(stage.pgm_hash))) &&
                     !desc.is_written) {
                     buffer_cache.ForceUpload(vsharp.base_address, size);
+                }
+                // bbport diagnosis: BB_TRACE_GPU_WRITES=<lo>-<hi> (hex): shaders that write
+                // buffers in that range (does the GPU write a constant buffer?).
+                {
+                    static const std::pair<u64, u64> range = [] {
+                        const char* env = std::getenv("BB_TRACE_GPU_WRITES");
+                        if (!env) return std::pair<u64, u64>{0, 0};
+                        char* end{};
+                        const u64 lo = std::strtoull(env, &end, 16);
+                        return std::pair<u64, u64>{lo, end && *end == '-' ? std::strtoull(end + 1, nullptr, 16) : 0};
+                    }();
+                    static std::atomic<u32> reports{0};
+                    if (desc.is_written && range.second && vsharp.base_address < range.second &&
+                        vsharp.base_address + size > range.first && reports.fetch_add(1) < 300) {
+                        std::printf("GPU write: shader %08x buffer %u at %#llx size %llu\n",
+                                    u32(stage.pgm_hash), buffer_index,
+                                    static_cast<unsigned long long>(vsharp.base_address),
+                                    static_cast<unsigned long long>(size));
+                    }
                 }
                 const auto [buffer, offset] = buffer_cache.ObtainBuffer(
                     vsharp.base_address, size, desc.is_written, desc.is_formatted);
@@ -4364,6 +4689,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         const auto* depth =
             db_desc.first ? &texture_cache.GetImage(db_desc.first).info : nullptr;
         FrameCapture::BeginPass(colors.data(), state.num_color_attachments, depth);
+        CaptureImages();
     }
     // bbport: object motion vector attachment of G-buffer pipelines.
     if (key.motion_vectors) {
@@ -4427,6 +4753,134 @@ static void TraceGdsWrite(const char* what, u64 offset, u32 num_bytes, u64 value
                     static_cast<unsigned long long>(offset), num_bytes,
                     static_cast<unsigned long long>(value));
     }
+}
+
+// bbport: BB_CAPTURE_IMAGES=1 with a frame capture: the display buffer the frame draws into,
+// saved when each pass begins (the state after the previous pass) as raw RGBA8 files
+// <BB_CAPTURE_DIR>/images/p<pass>.raw, to see in which pass an artifact appears.
+void Rasterizer::CaptureImages() {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_CAPTURE_IMAGES");
+        return env && env[0] == '1';
+    }();
+    static VAddr display = 0;
+    static u32 dumped = 0;
+    if (!enabled) {
+        return;
+    }
+    if (!FrameCapture::IsRecording()) {
+        display = 0;
+        dumped = 0;
+        return;
+    }
+    const u32 passes = FrameCapture::PassCount();
+    if (!display) {
+        // The frame's display buffer: the first one a pass of the recording draws into.
+        const auto& regs = Regs();
+        for (u32 cb = 0; cb < AmdGpu::NUM_COLOR_BUFFERS && !display; ++cb) {
+            if (regs.color_buffers[cb] && FrameCapture::IsDisplayBuffer(regs.color_buffers[cb].Address())) {
+                display = regs.color_buffers[cb].Address();
+            }
+        }
+    }
+    if (!display || passes == dumped || passes > 200) {
+        return;
+    }
+    dumped = passes;
+    // BB_CAPTURE_EXTRA=<addr>,... and BB_CAPTURE_EXTRA_PASS=<n>: before pass n, every image the
+    // texture cache holds at those addresses (all aliases), named with size, format and uid.
+    static const std::vector<VAddr> extra = [] {
+        std::vector<VAddr> list;
+        for (const char* p = std::getenv("BB_CAPTURE_EXTRA"); p && *p;) {
+            char* end{};
+            list.push_back(VAddr(std::strtoull(p, &end, 16)));
+            p = end && *end == ',' ? end + 1 : nullptr;
+        }
+        return list;
+    }();
+    static const u32 extra_pass = [] {
+        const char* env = std::getenv("BB_CAPTURE_EXTRA_PASS");
+        return env ? u32(std::strtoul(env, nullptr, 10)) : ~0u;
+    }();
+    std::vector<std::pair<VideoCore::ImageId, VAddr>> dumps;
+    if (passes - 1 == extra_pass) {
+        for (const VAddr address : extra) {
+            texture_cache.ForEachImageInRegion(address, 1, [&](VideoCore::ImageId id, VideoCore::Image& image) {
+                if (image.info.guest_address == address) {
+                    dumps.emplace_back(id, address);
+                }
+            });
+        }
+    }
+    for (const auto& [id, address] : dumps) {
+        auto& img = texture_cache.GetImage(id);
+        const u32 bpp = img.info.num_bits / 8;
+        if (img.info.props.is_depth || img.info.props.is_block || !bpp || bpp > 16) continue;
+        DumpCaptureImage(img, std::format("x{:03}_{:x}_{}x{}_fmt{}_bpp{}_uid{}", passes - 1,
+                                          address, img.info.size.width, img.info.size.height,
+                                          u32(img.info.pixel_format), bpp, img.image_uid));
+    }
+    const auto image_id = texture_cache.FindImageFromRange(display, 1920u * 1080u * 4u, false);
+    if (!image_id) {
+        return;
+    }
+    auto& image = texture_cache.GetImage(image_id);
+    if (image.info.num_bits != 32) {
+        return;
+    }
+    DumpCaptureImage(image, std::format("p{:03}_{:x}_{}x{}", passes - 1, display,
+                                        image.info.size.width, image.info.size.height));
+}
+
+void Rasterizer::DumpCaptureImage(VideoCore::Image& image, const std::string& name) {
+    const u32 w = image.info.size.width, h = image.info.size.height;
+    const u32 bpp = std::max(1u, image.info.num_bits / 8);
+    static const std::string dir = [] {
+        const char* env = std::getenv("BB_CAPTURE_DIR");
+        std::string d = std::string{env ? env : "."} + "/images";
+        std::error_code ec;
+        std::filesystem::create_directories(d, ec);
+        return d;
+    }();
+    scheduler.EndRendering();
+    const auto saved = image.backing->state;
+    runtime.Transit(&image, vk::ImageLayout::eTransferSrcOptimal, vk::PipelineStageFlagBits2::eCopy,
+                    vk::AccessFlagBits2::eTransferRead);
+    runtime.FlushBarriers();
+    const VkDeviceSize size = VkDeviceSize(w) * h * bpp;
+    const VkBufferCreateInfo buffer_ci{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                                       .size = size,
+                                       .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+    const VmaAllocationCreateInfo alloc_ci{
+        .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST};
+    VkBuffer buffer{};
+    VmaAllocation allocation{};
+    VmaAllocationInfo info{};
+    if (vmaCreateBuffer(instance.GetAllocator(), &buffer_ci, &alloc_ci, &buffer, &allocation,
+                        &info) == VK_SUCCESS) {
+        const vk::BufferImageCopy region{
+            .imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+            .imageExtent = {w, h, 1},
+        };
+        scheduler.Record([img = image.GetImage(), buffer, region](vk::CommandBuffer cmdbuf) {
+            cmdbuf.copyImageToBuffer(img, vk::ImageLayout::eTransferSrcOptimal, vk::Buffer{buffer},
+                                     region);
+        });
+        const std::string path = std::format("{}/{}.raw", dir, name);
+        scheduler.DeferPriorityOperation([allocator = instance.GetAllocator(), buffer, allocation,
+                                          info, size, path] {
+            vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
+            if (FILE* f = std::fopen(path.c_str(), "wb")) {
+                std::fwrite(info.pMappedData, 1, size, f);
+                std::fclose(f);
+            }
+            vmaDestroyBuffer(allocator, buffer, allocation);
+        });
+    }
+    // Back to the state the pass set up (its attachment layout is already recorded).
+    runtime.Transit(&image, saved.layout, saved.pl_stage, saved.access_mask);
+    runtime.FlushBarriers();
 }
 
 // bbport: BB_TRACE_DMA=1 prints small command-stream copies and fills into memory (which

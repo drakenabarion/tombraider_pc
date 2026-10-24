@@ -23,6 +23,8 @@
 void bbgpu_request_quit(void);
 void bbgpu_toggle_fullscreen(void);
 void bbgpu_show_quit_confirm(void);
+int bbgpu_is_fullscreen(void);
+static void runtime_menu_settings_pad(uint32_t buttons);
 
 /* BB_TRACE_MENU=1: the methods the game invokes on its menu movies (eboot 0xcad800: object,
  * method name, ...) and the movies' ExternalInterface calls back. */
@@ -102,16 +104,89 @@ void runtime_menu_pad(uint32_t buttons) {
         }
     }
     was_down=down;
+    runtime_menu_settings_pad(buttons);
+}
+
+/* ---- settings rows the port adds to Options > Display (tools/menu/edit_display.py) ----
+ * The movie reports the highlighted row ("BBPortFocus:<key>", empty for the game's own rows) and
+ * asks for the value to show ("BBPortGet:<key>", every frame while highlighted); the port answers
+ * through the movie's SetExternalInterfaceRetVal (vtable +0xa8, as the game's own handler does for
+ * isSD) and changes the value on left/right (or Cross) of the D-pad. */
+typedef struct { uint64_t object; uint32_t type, pad; uint64_t data; } GfxValue; /* GFx::Value */
+enum { GFX_STRING=4 }; /* this Scaleform: 2 bool, 3 number, 4 string (the game's own handler) */
+
+static const char *fullscreen_get(void) { return bbgpu_is_fullscreen() ? "$Menu_On" : "$Menu_Off"; }
+static void fullscreen_change(int dir) { (void)dir; bbgpu_toggle_fullscreen(); }
+
+/* Frame rate (bbport.ini fps_limit, live). Above 60 the game was never run on PS4: marked
+ * experimental (shadows differ slightly at 240). */
+int bbgpu_fps_limit(void);
+void bbgpu_set_fps_limit(int fps);
+static const int fps_values[]={30,40,60,120,144,240};
+static const char *const fps_labels[]={"30","40","60","120 (Experimental)","144 (Experimental)",
+                                       "240 (Experimental)"};
+enum { FPS_COUNT=(int)(sizeof(fps_values)/sizeof(fps_values[0])) };
+static int fps_index(void) {
+    const int fps=bbgpu_fps_limit();
+    int best=2;
+    for (int i=0;i<FPS_COUNT;++i) if (fps_values[i]<=fps) best=i;
+    return best;
+}
+static const char *fps_get(void) { return fps_labels[fps_index()]; }
+static void fps_change(int dir) {
+    const int i=(fps_index()+dir+FPS_COUNT)%FPS_COUNT;
+    bbgpu_set_fps_limit(fps_values[i]);
+}
+
+typedef struct { const char *key; const char *(*get)(void); void (*change)(int dir); } PortSetting;
+static const PortSetting port_settings[]={
+    {"fullscreen",fullscreen_get,fullscreen_change},
+    {"fps",fps_get,fps_change},
+};
+static const PortSetting *volatile focused_setting;
+
+static const PortSetting *find_setting(const char *key) {
+    for (size_t i=0;i<sizeof(port_settings)/sizeof(port_settings[0]);++i)
+        if (!strcmp(port_settings[i].key,key)) return &port_settings[i];
+    return NULL;
+}
+
+static void return_string(uint64_t movie, const char *text) {
+    if (!movie) return;
+    typedef void (ABI *SetRetFn)(uint64_t movie, const GfxValue *value);
+    const uint64_t vtable=*(const uint64_t *)(uintptr_t)movie;
+    SetRetFn set=(SetRetFn)(uintptr_t)*(const uint64_t *)(uintptr_t)(vtable+0xa8);
+    GfxValue value={0,GFX_STRING,0,(uint64_t)(uintptr_t)text};
+    set(movie,&value);
+}
+
+static void runtime_menu_settings_pad(uint32_t buttons) {
+    static uint32_t was;
+    const uint32_t pressed=buttons & ~was;
+    was=buttons;
+    const PortSetting *s=focused_setting;
+    if (!s) return;
+    const int dir=(pressed & 0x80) ? -1 : (pressed & (0x20|0x4000)) ? 1 : 0; /* Left; Right, Cross */
+    if (dir) { s->change(dir); printf("Menu: %s changed\n",s->key); }
 }
 
 void __attribute__((ms_abi)) runtime_menu_external_call(uint64_t self, uint64_t name, uint64_t image, uint64_t r14) {
-    (void)self; (void)r14;
+    (void)r14;
     guest_image=image;
     on_menu_thread=1;
     const char *method=(const char *)(uintptr_t)name;
     if (trace_menu() && method && __atomic_fetch_add(&traced_lines,1,__ATOMIC_RELAXED)<3000)
         printf("Menu external call: %.80s\n",method);
     if (!method || strncmp(method,"BBPort",6)) return;
+    if (!strncmp(method,"BBPortFocus:",12)) {
+        focused_setting=method[12] ? find_setting(method+12) : NULL;
+        return;
+    }
+    if (!strncmp(method,"BBPortGet:",10)) {
+        const PortSetting *setting=find_setting(method+10);
+        return_string(self,setting ? setting->get() : "");
+        return;
+    }
     if (!strncmp(method,"BBPortHighlight",15)) {
         highlighted=(int)strtol(method+15,NULL,10);
     } else if (!strncmp(method,"BBPortQuitIndex",15)) {

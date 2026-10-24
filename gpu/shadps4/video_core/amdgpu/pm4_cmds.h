@@ -3,6 +3,10 @@
 
 #pragma once
 
+#include <cstdlib>
+#include <cstdio>
+#include <atomic>
+
 #include <cstring>
 #include "common/assert.h"
 #include "common/bit_field.h"
@@ -337,11 +341,29 @@ enum class InterruptSelect : u32 {
     IrqUndocumented = 3,
 };
 
+// bbport: the PS4's GPU clock counter (end-of-pipe timestamps) runs at the 100 MHz reference
+// clock, one tick per 10 ns. Nanoseconds made every GPU frame look ten times longer: Tomb
+// Raider's motion blur took 60 FPS frames for hitches (no blur at all) and, above ~95 FPS,
+// blurred ten times too far (the smear at 120 FPS). BB_GPU_CLOCK_NS=1: the old nanoseconds.
 static u64 GetGpuClock64() {
-    auto now = std::chrono::high_resolution_clock::now();
+    static const bool nanoseconds = [] {
+        const char* env = std::getenv("BB_GPU_CLOCK_NS");
+        return env && env[0] == '1';
+    }();
+    auto now = std::chrono::steady_clock::now();
     auto duration = now.time_since_epoch();
     auto ticks = std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
-    return static_cast<u64>(ticks);
+    return static_cast<u64>(nanoseconds ? ticks : ticks / 10);
+}
+
+// bbport: BB_TRACE_GPUCLOCK=1 prints the first timestamp writes of each kind.
+static void TraceGpuClock(const char* kind, u64 address, u64 value) {
+    static const bool enabled = std::getenv("BB_TRACE_GPUCLOCK") != nullptr;
+    static std::atomic<u32> lines{0};
+    if (enabled && lines.fetch_add(1, std::memory_order_relaxed) < 40) {
+        std::printf("GpuClock: %s to %#llx = %llu\n", kind, static_cast<unsigned long long>(address),
+                    static_cast<unsigned long long>(value));
+    }
 }
 
 static u64 GetGpuPerfCounter() {
@@ -480,11 +502,19 @@ struct PM4CmdEventWriteEop {
             break;
         }
         case DataSelect::GpuClock64: {
-            write_mem(address, GetGpuClock64(), sizeof(u64));
+            {
+                const u64 value = GetGpuClock64();
+                TraceGpuClock("EOP GpuClock64", reinterpret_cast<u64>(address), value);
+                write_mem(address, value, sizeof(u64));
+            }
             break;
         }
         case DataSelect::PerfCounter: {
-            write_mem(address, GetGpuPerfCounter(), sizeof(u64));
+            {
+                const u64 value = GetGpuPerfCounter();
+                TraceGpuClock("EOP PerfCounter", reinterpret_cast<u64>(address), value);
+                write_mem(address, value, sizeof(u64));
+            }
             break;
         }
         default: {
@@ -964,6 +994,7 @@ struct PM4CmdReleaseMem {
         }
         case DataSelect::GpuClock64: {
             *Address<u64*>() = GetGpuClock64();
+            TraceGpuClock("EOS GpuClock64", 0, *Address<u64*>());
             break;
         }
         case DataSelect::PerfCounter: {

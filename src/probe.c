@@ -136,6 +136,7 @@ static ABI __attribute__((noreturn)) void unresolved(uint32_t id, uintptr_t argu
     _exit(20); /* no destructors: GPU, audio and guest threads are still running */
 }
 #ifndef _WIN32
+void runtime_hwbp_thread_start(void);
 /* enter_on_stack(entry, arg0, arg1, stack_top): call entry(arg0,arg1) on a new stack. */
 void enter_on_stack(void *entry, void *arg0, void *arg1, void *top);
 __asm__(".text\n.globl enter_on_stack\nenter_on_stack:\n"
@@ -658,6 +659,42 @@ static void install_game_callbacks(Segment *segments, uint64_t ns, uint64_t imag
  * first run, an upscaler starting) and the game stopped right after U1's first cutscene. The
  * assertion's branch is found through its message, in any version of the three games, and the
  * failed check now waits (pause, check again) instead. */
+/* Motion blur above 90 fps. The game keeps the last four camera matrices with their ages
+ * (+0x2130/+0x2230, ages at +0x2330..+0x233c) and builds the blur camera from the one 1/30 s
+ * old, interpolating between neighbouring slots. When three frames are younger than 1/30 s
+ * (above 90 fps, never reached on PS4) the original falls through to a fifth "slot": it takes
+ * an age from +0x2340 (the previous result matrix) and lerps towards the other matrix array,
+ * so the result feeds back into itself and the image smears. The replacement keeps the
+ * original choice whenever a slot is old enough and otherwise extrapolates the two oldest
+ * slots to 1/30 s, so the blur length matches 60 fps; equal ages use the oldest slot.
+ * BB_MOTION_BLUR_FIX=0 leaves the original code. */
+static void patch_motion_blur_history(uint64_t image_size) {
+    static const unsigned char original[]=
+        "\xc5\xfa\x10\x83\x34\x23\x00\x00\xc5\xf8\x2e\x05\x97\xfb\x75\x00\x76\x0a\xc5\xf8\x28\xd0\xc5\xf8"
+        "\x57\xc0\xeb\x6a\xc5\xfa\x10\x8b\x38\x23\x00\x00\xc5\xfa\x10\x15\x7b\xfb\x75\x00\xc5\xf8\x2e\xd0"
+        "\x72\x16\x41\xbe\x01\x00\x00\x00\xc5\xf8\x2e\x0d\x67\xfb\x75\x00\x76\x06\xc5\xf8\x28\xd1\xeb\x3e"
+        "\xc5\xfa\x10\x83\x3c\x23\x00\x00\xc5\xfa\x10\x15\x4f\xfb\x75\x00\xc5\xf8\x2e\xd1\x72\x1a\x41\xbe"
+        "\x02\x00\x00\x00\xc5\xf8\x2e\x05\x3b\xfb\x75\x00\x76\x0a\xc5\xf8\x28\xd0\xc5\xf8\x28\xc1\xeb\x0e"
+        "\xc5\xfa\x10\x93\x40\x23\x00\x00\x41\xbe\x03\x00\x00\x00\xc5\xea\x5c\xc8\xc5\xfa\x10\x15\x15\xfb"
+        "\x75\x00\xc5\xea\x5c\xc0\xc5\xfa\x5e\xc9\xc5\xfa\x11\x8d\x30\x1a\xff\xff";
+    static const unsigned char fixed[]=
+        "\xc5\xfa\x10\x1d\x9f\xfb\x75\x00\xc5\xfa\x10\x93\x34\x23\x00\x00\xc5\xf8\x57\xc0\x45\x31\xf6\xc5"
+        "\xf8\x2e\xd3\x77\x2a\xc5\xf8\x28\xc2\xc5\xfa\x10\x93\x38\x23\x00\x00\x41\xbe\x01\x00\x00\x00\xc5"
+        "\xf8\x2e\xd3\x77\x12\xc5\xf8\x28\xc2\xc5\xfa\x10\x93\x3c\x23\x00\x00\x41\xbe\x02\x00\x00\x00\xc5"
+        "\xea\x5c\xc8\xc5\xe2\x5c\xc0\xc5\xfa\x5e\xc1\xc5\xd8\x57\xe4\xc5\xf8\x2e\xcc\x77\x08\xc5\xfa\x10"
+        "\x05\x3e\xfb\x75\x00\xc5\xf8\x28\xc8\xc5\xfa\x11\x8d\x30\x1a\xff\xff\x90\x90\x90\x90\x90\x90\x90"
+        "\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90"
+        "\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90";
+    const uint64_t at=0xc4c949;
+    const char *env=getenv("BB_MOTION_BLUR_FIX");
+    if (env && !strcmp(env,"0")) return;
+    if (at+sizeof(original)-1>image_size || memcmp(image+at,original,sizeof(original)-1)) {
+        printf("Motion blur: history selection not found, left as is\n");
+        return;
+    }
+    memcpy(image+at,fixed,sizeof(fixed)-1); /* the literals' NUL not copied */
+    printf("Motion blur: history selection fixed for frame rates above 90\n");
+}
 static void patch_eop_tick_wait(uint64_t image_size) {
     static const char message[]="GetRenderFrameParams(frameToFreeInstancesFor)->m_gfxEopTick";
     unsigned char *text=NULL;
@@ -983,6 +1020,7 @@ int main(int argc, char **argv) {
         for (uint64_t s=0;s<ns;++s) if (segments[s].address+segments[s].size>image_end) image_end=segments[s].address+segments[s].size;
         install_game_callbacks(segments, ns, image_end);
         patch_eop_tick_wait(image_end);
+        patch_motion_blur_history(image_end);
     }
 #ifdef _WIN32
     printf("Guest TCB loads redirected to the TEB TLS slot: %" PRIu64 "\n", patch_tcb_loads(segments, ns));
@@ -1011,6 +1049,7 @@ int main(int argc, char **argv) {
         runtime_thread_attach_main();
         runtime_set_procparam(image+procparam);
         runtime_set_guest_fpu();
+        runtime_hwbp_thread_start(); /* BB_HWBP_WATCH: the main thread too */
         /* Dependencies start in link order (libc first), as the PS4 dynamic linker does. */
         for (uint64_t m=0;m<module_count;++m) {
             printf("Starting linked module %" PRIu64 " at image offset 0x%" PRIx64 "; native bindings=%" PRIu64 "\n",m,modules[m].init,nb);

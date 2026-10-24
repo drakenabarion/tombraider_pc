@@ -19,6 +19,7 @@ std::atomic<bool> mouse_look{false}, mouse_captured{false};
 bool window_focused{true};
 // bbport: requests from other threads (the game's menus, runtime_menu.c), run by the window thread.
 std::atomic<bool> fullscreen_toggle{false};
+std::atomic<bool> fullscreen_now{false};
 
 u32 MouseBit(u8 button) {
     switch (button) {
@@ -40,6 +41,9 @@ extern "C" void bbgpu_request_quit(void) {
 }
 
 // bbport: the in-game fullscreen option, Alt+Enter and F11.
+extern "C" int bbgpu_is_fullscreen(void) {
+    return fullscreen_now.load() ? 1 : 0;
+}
 extern "C" void bbgpu_toggle_fullscreen(void) {
     fullscreen_toggle = true;
 }
@@ -163,6 +167,7 @@ bool WindowSDL::PollEvents() {
         const bool full = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
         SDL_SetWindowFullscreen(window, !full);
     }
+    fullscreen_now = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && !text_active &&

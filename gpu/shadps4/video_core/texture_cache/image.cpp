@@ -363,9 +363,25 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
         });
     }
 
+    // bbport: a draw that samples its own attachment (the composite reading the display buffer
+    // it draws into, light passes reading depth while writing stencil) gets its textures bound
+    // after its attachments; the attachment write still follows. Keep it in the state, so the
+    // next transition waits for it (sync validation: WRITE_AFTER_WRITE on the depth buffer).
+    constexpr auto attachment_writes = vk::AccessFlagBits2::eColorAttachmentWrite |
+                                       vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+    constexpr auto attachment_stages = vk::PipelineStageFlagBits2::eColorAttachmentOutput |
+                                       vk::PipelineStageFlagBits2::eEarlyFragmentTests |
+                                       vk::PipelineStageFlagBits2::eLateFragmentTests;
+    const bool keeps_attachment = last_state.layout == dst_layout &&
+                                  (last_state.access_mask & attachment_writes) &&
+                                  !(dst_mask & attachment_writes);
+    const auto kept_access = keeps_attachment ? last_state.access_mask & attachment_writes
+                                              : vk::AccessFlags2{};
+    const auto kept_stage = keeps_attachment ? last_state.pl_stage & attachment_stages
+                                             : vk::PipelineStageFlags2{};
     last_state.layout = dst_layout;
-    last_state.access_mask = dst_mask;
-    last_state.pl_stage = dst_stage;
+    last_state.access_mask = dst_mask | kept_access;
+    last_state.pl_stage = dst_stage | kept_stage;
 }
 
 } // namespace VideoCore

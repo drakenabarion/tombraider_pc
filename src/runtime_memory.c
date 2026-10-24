@@ -793,6 +793,54 @@ void runtime_memory_set_gpu_hooks(GpuRange map, GpuRange unmap, GpuRange invalid
     write_unlock();
     flush_hooks();
 }
+/* bbport diagnosis: guest addresses (up to max) holding `pattern`, read through the backing view
+ * (no page protection faults). For finding where the game keeps a value seen in GPU data. */
+int runtime_memory_find(const void *pattern, size_t length, uintptr_t *out, int max) {
+    int found=0;
+    if (!length || !backing_base) return 0;
+    read_lock();
+    for (size_t i=0;i<vma_count && found<max;++i) {
+        if (vmas[i].kind==KIND_RESERVED) continue;
+        const unsigned char *data=backing_base+vmas[i].phys;
+        const size_t size=vmas[i].end-vmas[i].start;
+        for (size_t at=0; at+length<=size && found<max; at+=4) {
+            if (!memcmp(data+at,pattern,length)) out[found++]=vmas[i].start+at;
+        }
+    }
+    read_unlock();
+    return found;
+}
+/* Like runtime_memory_find, for `count` consecutive floats each within `relative` of the target
+ * (a value the game keeps updating). */
+int runtime_memory_find_floats_tol(const float *target, const float *relative, int count, uintptr_t *out, int max);
+int runtime_memory_find_floats(const float *target, int count, float relative, uintptr_t *out, int max) {
+    float tol[16];
+    for (int k=0;k<count && k<16;++k) tol[k]=relative;
+    return runtime_memory_find_floats_tol(target,tol,count<16?count:16,out,max);
+}
+/* Per-float tolerances. */
+int runtime_memory_find_floats_tol(const float *target, const float *relative, int count, uintptr_t *out, int max) {
+    int found=0;
+    if (count<1 || !backing_base) return 0;
+    read_lock();
+    for (size_t i=0;i<vma_count && found<max;++i) {
+        if (vmas[i].kind==KIND_RESERVED) continue;
+        const float *data=(const float *)(backing_base+vmas[i].phys);
+        const size_t words=(vmas[i].end-vmas[i].start)/4;
+        for (size_t at=0; at+(size_t)count<=words && found<max; ++at) {
+            int ok=1;
+            for (int k=0;k<count && ok;++k) {
+                const float t=target[k], v=data[at+k];
+                /* relative[k] < 0: an absolute tolerance of -relative[k] */
+                const float d=v>t ? v-t : t-v, m=relative[k]<0 ? -relative[k] : (t<0 ? -t : t)*relative[k];
+                ok = d<=m && v==v;
+            }
+            if (ok) out[found++]=vmas[i].start+at*4;
+        }
+    }
+    read_unlock();
+    return found;
+}
 /* Writes through the backing view; 0 when part of the range has no backing. */
 int runtime_memory_write_backing(uintptr_t address, const void *data, uint64_t size) {
     read_lock();

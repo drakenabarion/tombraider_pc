@@ -20,6 +20,23 @@ and `PATCH0.manifest.bin` in place of the game's (`BB_GAME_OVERRIDES`; `off` dis
 
 The native side is `src/runtime_menu.c`: Cross over the item opens the game's own Yes/No popup.
 
+## Options > Display: the port's settings
+
+`edit_display.py` adds rows after Subtitles (now: Fullscreen; DLSS and frame rate later) to
+`State_OptionsDisplay` in the options movie (PRIORITY0 entry c694569a). The game drives the page
+and knows only its own four rows, so the port handles the added ones (`src/runtime_menu.c`,
+`port_settings`):
+
+- the movie reports the highlighted row: `BBPortFocus:<key>` (`BBPortFocus:` for the game's);
+- while one is highlighted, it asks `BBPortGet:<key>` every frame and shows the answer (a `$`
+  string is localized, e.g. `$Menu_On`); the port answers with the movie's
+  SetExternalInterfaceRetVal, as the game's own handler does;
+- the port changes the value on D-pad left/right or Cross.
+
+A row is a line in `ROWS` (edit_display.py) and an entry in `port_settings`. The class is
+recompiled from ActionScript source, which grows the movie; removing the `trace()` calls from
+every script (`pcode.py`) makes the room.
+
 ## Rules the archive imposes
 
 - The edited movie must not be larger than the original: the engine finds the section's texture

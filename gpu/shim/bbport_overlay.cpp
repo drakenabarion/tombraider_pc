@@ -65,6 +65,10 @@ float base_scale = 1.0f;
 // Present rate for the FPS counter.
 std::chrono::steady_clock::time_point last_present{};
 float frame_ms_avg = 0.0f, last_present_ms = 0.0f;
+// Presented frames and the time since the first one (FPS counter, BB_FPS_LOG): how far a
+// test run has got.
+unsigned long long presented_frames = 0;
+std::chrono::steady_clock::time_point first_present{};
 
 void SetOpen(bool value) {
     if (menu_open.exchange(value) == value) {
@@ -535,8 +539,10 @@ void FpsCounter() {
                      ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
                      ImGuiWindowFlags_NoFocusOnAppearing);
     const auto& s = BbSettings::Get();
-    ImGui::Text("%.0f FPS  %.1f ms  %s", frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f,
-                frame_ms_avg,
+    const float run_seconds =
+        presented_frames ? std::chrono::duration<float>(std::chrono::steady_clock::now() - first_present).count() : 0.0f;
+    ImGui::Text("%.0f FPS  %.1f ms  frame %llu  %.0f s  %s", frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f,
+                frame_ms_avg, presented_frames, run_seconds,
                 s.upscaler == BbSettings::UpscalerFsr3   ? "FSR 3.1"
                 : s.upscaler == BbSettings::UpscalerFsr4 ? "FSR 4"
                 : s.upscaler == BbSettings::UpscalerFsr411 ? "FSR 4.1.1"
@@ -744,6 +750,7 @@ void NotePresent() {
     const float ms = std::chrono::duration<float, std::milli>(now - last_present).count();
     last_present = now;
     last_present_ms = ms;
+    if (presented_frames++ == 0) first_present = now;
     if (ms > 0.0f && ms < 1000.0f) {
         frame_ms_avg = frame_ms_avg == 0.0f ? ms : frame_ms_avg * 0.95f + ms * 0.05f;
     }
@@ -760,7 +767,9 @@ void NotePresent() {
         worst = std::max(worst, ms < 1000.0f ? ms : 0.0f);
         const float elapsed = std::chrono::duration<float>(now - window_start).count();
         if (elapsed >= 5.0f) {
-            std::printf("Frame rate: %.1f FPS, slowest frame %.1f ms\n", frames / elapsed, worst);
+            std::printf("Frame rate: %.1f FPS, slowest frame %.1f ms (frame %llu, %.0f s)\n",
+                        frames / elapsed, worst, presented_frames,
+                        std::chrono::duration<float>(now - first_present).count());
             window_start = now;
             frames = 0;
             worst = 0.0f;

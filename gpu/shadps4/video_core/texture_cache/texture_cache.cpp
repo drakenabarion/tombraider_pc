@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
+#include <cstdio>
+#include <cstdlib>
 #include <xxhash.h>
 
 #include "bbport_toggles.h"
@@ -786,6 +789,21 @@ void TextureCache::RefreshImage(Image& image) {
         image.hash = hash;
     }
 
+    // bbport diagnosis: BB_TRACE_REFRESH=1 prints uploads of large images (render targets,
+    // display buffers) from guest memory: a GPU-written target reloaded from stale memory.
+    {
+        static const bool trace_refresh = std::getenv("BB_TRACE_REFRESH") != nullptr;
+        static std::atomic<u32> traced{0};
+        if (trace_refresh && image.info.guest_size >= 1920u * 1080u * 2u &&
+            traced.fetch_add(1, std::memory_order_relaxed) < 400) {
+            std::printf("Refresh: upload %#llx %ux%u fmt %u size %llu flags %#x\n",
+                        static_cast<unsigned long long>(image.info.guest_address),
+                        image.info.size.width, image.info.size.height,
+                        u32(image.info.pixel_format),
+                        static_cast<unsigned long long>(image.info.guest_size),
+                        u32(image.flags));
+        }
+    }
     const u32 num_layers = image.info.resources.layers;
     const u32 num_mips = image.info.resources.levels;
     const bool is_gpu_modified = True(image.flags & ImageFlagBits::GpuModified);

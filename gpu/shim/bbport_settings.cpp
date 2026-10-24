@@ -6,7 +6,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <set>
 #include <string_view>
+#include <vector>
 
 namespace BbSettings {
 
@@ -60,6 +62,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.debug_view = std::clamp(i, 0, DebugViewCount - 1);
     } else if (key == "show_fps") {
         v.show_fps = i != 0;
+    } else if (key == "fps_limit") {
+        v.fps_limit = std::clamp(i, 0, 1000);
     } else if (key == "fsr4_auto_exposure") {
         v.fsr4_auto_exposure = i != 0;
     } else if (key == "fsr4_invert_jitter") {
@@ -188,6 +192,19 @@ bool ResolutionNeedsRestart() {
 
 void Save() {
     const auto& v = Get();
+    // Lines this build does not write (keys of other versions, the launcher's) are kept.
+    std::vector<std::string> old_lines;
+    if (FILE* old = std::fopen(Path(), "r")) {
+        char line[512];
+        while (std::fgets(line, sizeof(line), old)) {
+            std::string text{line};
+            text.erase(text.find_last_not_of(" \t\r\n") + 1);
+            if (!text.empty() && text[0] != '#' && text.find('=') != std::string::npos) {
+                old_lines.push_back(text);
+            }
+        }
+        std::fclose(old);
+    }
     FILE* file = std::fopen(Path(), "w");
     if (!file) {
         std::printf("Settings: cannot write %s\n", Path());
@@ -215,7 +232,35 @@ void Save() {
     // Read by run.sh at start.
     std::fprintf(file, "live_resolution=%s\n", v.live_resolution < 0 ? "auto"
                                                   : v.live_resolution ? "1" : "0");
+    std::fprintf(file, "fps_limit=%d\n", v.fps_limit.load());
     std::fclose(file);
+    std::set<std::string> written;
+    if (FILE* now = std::fopen(Path(), "r")) {
+        char line[512];
+        while (std::fgets(line, sizeof(line), now)) {
+            const std::string text{line};
+            const auto eq = text.find('=');
+            if (text[0] != '#' && eq != std::string::npos) written.insert(text.substr(0, eq));
+        }
+        std::fclose(now);
+    }
+    if (FILE* append = std::fopen(Path(), "a")) {
+        for (const auto& line : old_lines) {
+            if (!written.count(line.substr(0, line.find('=')))) {
+                std::fprintf(append, "%s\n", line.c_str());
+            }
+        }
+        std::fclose(append);
+    }
+}
+
+// The port's Options > Display rows (src/runtime_menu.c).
+extern "C" int bbgpu_fps_limit() {
+    return Get().fps_limit.load();
+}
+extern "C" void bbgpu_set_fps_limit(int fps) {
+    Get().fps_limit = std::clamp(fps, 0, 1000);
+    Save();
 }
 
 float PresetScale(int preset) {
