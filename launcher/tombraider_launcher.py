@@ -44,7 +44,7 @@ CONFIG_FILE = CONFIG_DIR / 'settings.json'
 NAME = 'Tomb Raider'
 AUTHOR = 'drakenabarion'
 # This build; GitHub release tags are v<VERSION> (their digits are compared).
-VERSION = '0.2.0'
+VERSION = '0.2.1'
 RELEASES_API = 'https://api.github.com/repos/drakenabarion/tombraider_pc/releases/latest'
 RELEASES_PAGE = 'https://github.com/drakenabarion/tombraider_pc/releases/latest'
 UPDATE_DIR = Path(tempfile.gettempdir()) / 'tombraider-update'
