@@ -5,6 +5,8 @@
 BB_GAME_DIR   the game folder (CUSA00109 with the 1.01 update copied over it; the one with eboot.bin)
 BB_EXE        game (eboot.bin, the default) or an executable name
 BB_USER_DIR   saves and shader caches (default user/ beside this script)
+BB_GAME_OVERRIDES  folder of game files read in place of the game's (default: built in
+              out/game-overrides from the game's archives: the Quit Game menu item); off: none
 Extra arguments go to bb-probe. When the game starts another executable
 (sceSystemServiceLoadExec), that one is prepared and started in its place.
 The in-game "Apply and restart" runs this script again through BB_RESTART_COMMAND;
@@ -141,6 +143,17 @@ def main():
         guest_argv = out_root / 'guest-argv.txt'
         out_root.mkdir(parents=True, exist_ok=True)
         guest_argv.write_text('\n'.join([f'/app0/{exe}', *env['BB_GUEST_ARGS'].split()]) + '\n', encoding='utf-8')
+    # The port's menu additions (Quit Game): the game's own movies with the patches in
+    # scripts/menus/, built from this game's archives. BB_GAME_OVERRIDES=<folder> uses another
+    # folder, =off none.
+    overrides = env.get('BB_GAME_OVERRIDES', '')
+    if overrides.lower() == 'off':
+        env.pop('BB_GAME_OVERRIDES')
+    elif not overrides:
+        built = out_root / 'game-overrides'
+        run_script('game_overrides.py', game, built)
+        if (built / 'stamp.txt').is_file():
+            env['BB_GAME_OVERRIDES'] = str(built)
     while True:
         if not (game / exe).is_file():
             fail(f'No {exe} in {game}.')

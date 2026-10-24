@@ -56,7 +56,9 @@ ldd "$dest/bin/bb-probe.exe" "$dest/bin/bb-gpu-capabilities.exe" |
         cp -u "$dll" "$dest/bin/"
     done
 # Only what run.py runs to prepare a game (Bloodborne's patch and mod tools stay out).
-cp scripts/prepare.py scripts/link_modules.py scripts/link_libc.py scripts/content_profile.py "$dest/scripts/"
+cp scripts/prepare.py scripts/link_modules.py scripts/link_libc.py scripts/content_profile.py \
+   scripts/game_overrides.py scripts/menu_patch.py scripts/tiger.py "$dest/scripts/"
+cp -r scripts/menus "$dest/scripts/"
 cp run.py LICENSE "$dest/"
 cp packaging/windows/README-TombRaider.txt "$dest/README.txt"
 cp packaging/CREDITS.txt "$dest/"

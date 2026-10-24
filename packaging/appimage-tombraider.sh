@@ -44,7 +44,9 @@ if [[ -f out/libbbport_dlss.so ]]; then
     [[ -f out/NVIDIA-DLSS-LICENSE.txt ]] && cp out/NVIDIA-DLSS-LICENSE.txt "$share/"
 fi
 cp scripts/prepare.py scripts/link_modules.py scripts/link_libc.py scripts/content_profile.py \
-   scripts/patches.py scripts/mods.py "$share/scripts/"
+   scripts/patches.py scripts/mods.py scripts/game_overrides.py scripts/menu_patch.py scripts/tiger.py \
+   "$share/scripts/"
+cp -r scripts/menus "$share/scripts/"
 cp run.py LICENSE packaging/CREDITS.txt "$share/"
 [[ -d patches ]] && cp -r patches "$share/"
 [[ -d fsr4_shaders ]] && cp -r fsr4_shaders "$share/"

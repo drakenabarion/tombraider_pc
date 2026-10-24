@@ -90,6 +90,23 @@ maintainer's machine. Shader patches: put a modified SPIR-V at
 `.cur-*` files there are inactive test variants of the resolve shader (no fog, no shadow, no
 cube, no specular, tangent colours); rename one to `fs_0x42d601c4e9788311_0.spv` to use it.
 
+## Port additions: menu items
+
+The main menu has a Quit Game item (October 2026). Cross over it opens the game's own Yes/No
+popup (the pause menu's quit warning, with the platform's button prompts); Yes closes the game.
+
+- Movie side: `tools/menu/` (see its README). The edited movie ships as a patch against the
+  player's own (`scripts/menus/mainmenu-quit.bbmenu`); `run.py` runs `scripts/game_overrides.py`,
+  which builds `out/game-overrides/PATCH0.*` from the game's archives, and the runtime reads
+  those in place of the game's (`BB_GAME_OVERRIDES`).
+- Native side: `src/runtime_menu.c`, hooked through `runtime_pad.c`'s guest callbacks: the
+  movies' `ExternalInterface.call` handler (eboot 0xd1ba80) receives the item's index and the
+  highlight; the pad sampling sees Cross; the popup is `0x818fc0(0xd08350(), user, listener,
+  1, text)` with the listener on the game's delegate vtable (0x17018a0). The overlay's Yes/No
+  box is the fallback.
+- `bbgpu_toggle_fullscreen` (also F11 and Alt+Enter) is there for an Options entry that is not
+  added yet; it would go in the options movie the same way.
+
 ## Open problems, in priority order
 
 ### 1. Other visual bugs
@@ -101,15 +118,12 @@ above (heavy rain section checked); no separate cause was found.
 
 Shaders compile on first use. Later: async compilation and/or enabling the pipeline cache.
 
-### 3. Packaging (needed before any binary release)
+### 3. Packaging
 
-Everything in `packaging/`, `launcher/` and `run.sh` is still Virtual-On's: the launcher
-(`launcher/virtualon_launcher.py`), the AppImage (`dist/Virtual-On-x86_64.AppImage`, data in
-`~/.local/share/virtualon`, which would clash with the installed Virtual-On), the Windows scripts
-(`packaging/windows/`, `VO_KIT`), and `run.sh` (calls `link_libc.py`; make it use what `run.py`
-does). Rename to Tomb Raider, give it its own data folder, then build `appimage-linux.sh` on
-Linux and `packaging/windows/build-windows.bat` on Windows. The Virtual-On repo
-(`Projects/virtualon_pc`) shows how its releases were made.
+The Linux AppImage is released (v0.2.0: `packaging/appimage-tombraider.sh`, launcher
+`launcher/tombraider_launcher.py`). Still to do: a Windows build with the October fixes
+(`packaging/windows/`), and `run.sh`, which is still Virtual-On's (it looks for `../CUSA03173`;
+use `run.py`).
 
 ### 4. Clean-up
 
@@ -130,6 +144,9 @@ Linux and `packaging/windows/build-windows.bat` on Windows. The Virtual-On repo
 | `BB_PATCH_SHADERS=1` | Load SPIR-V replacements from `user/shader/patch` |
 | `BB_VTX_Z_FMT=0`, `BB_PARTIAL_DEPTH_CLEAR=0`, `BB_MASKED_STENCIL_CLEAR=0` | Turn off the October 2026 depth/stencil fixes (for comparison) |
 | `BB_OCCLUSION_QUERIES=0` | Synthetic occlusion results instead of real queries (for comparison) |
+| `BB_TRACE_MENU=1` | Methods the game invokes on its menu movies and their ExternalInterface calls |
+| `BB_GAME_OVERRIDES=<folder>\|off` | Game files read in place of the game's (default: `out/game-overrides`, built by `run.py`) |
+| `BB_EBOOT_BYTES=<vaddr>=<hex>,...` | Byte writes into the executable after the patches |
 | `BB_SKIP_SHADERS=<hashes>` | Skip draws with those shaders |
 | `BB_TOGGLE_FILE=<file>` | Live renderer toggles (bits in `gpu/shim/bbport_toggles.h`) |
 | `BB_CAPTURE_TRIGGER/BY_FLIP/DIR` | Frame captures |
