@@ -138,10 +138,54 @@ static void fps_change(int dir) {
     bbgpu_set_fps_limit(fps_values[i]);
 }
 
+/* Render resolution and shadow quality (bbport.ini render_res, shadow_quality): eboot patches
+ * applied at start (probe.c), so a change shows "(on restart)" until the next start. */
+void bbgpu_render_res(int *w, int *h, int *startup_w, int *startup_h);
+void bbgpu_set_render_res(int w, int h);
+int bbgpu_shadow_quality(int *startup);
+void bbgpu_set_shadow_quality(int quality);
+static const int render_sizes[][2]={{1280,720},{1600,900},{1920,1080},{2560,1440},{3200,1800},{3840,2160}};
+enum { RENDER_COUNT=(int)(sizeof(render_sizes)/sizeof(render_sizes[0])) };
+static const char *restart_note(int changed) { return changed ? " (on restart)" : ""; }
+static int render_index(void) {
+    int w, h, sw, sh, best=2;
+    bbgpu_render_res(&w,&h,&sw,&sh);
+    for (int i=0;i<RENDER_COUNT;++i) if (render_sizes[i][0]==w && render_sizes[i][1]==h) best=i;
+    return best;
+}
+static const char *render_get(void) {
+    static char text[64];
+    int w, h, sw, sh;
+    bbgpu_render_res(&w,&h,&sw,&sh);
+    snprintf(text,sizeof(text),"%dx%d%s%s",w,h,w==1920 && h==1080 ? " (PS4)" : "",
+             restart_note(w!=sw || h!=sh));
+    return text;
+}
+static void render_change(int dir) {
+    const int i=(render_index()+dir+RENDER_COUNT)%RENDER_COUNT;
+    bbgpu_set_render_res(render_sizes[i][0],render_sizes[i][1]);
+}
+static const char *const shadow_labels[]={"PS4","High","Highest"};
+enum { SHADOW_COUNT=3 };
+static const char *shadow_get(void) {
+    static char text[48];
+    int startup;
+    const int q=bbgpu_shadow_quality(&startup);
+    snprintf(text,sizeof(text),"%s%s",shadow_labels[q<SHADOW_COUNT ? q : SHADOW_COUNT-1],restart_note(q!=startup));
+    return text;
+}
+static void shadow_change(int dir) {
+    int startup;
+    const int q=bbgpu_shadow_quality(&startup);
+    bbgpu_set_shadow_quality((q+dir+SHADOW_COUNT)%SHADOW_COUNT);
+}
+
 typedef struct { const char *key; const char *(*get)(void); void (*change)(int dir); } PortSetting;
 static const PortSetting port_settings[]={
     {"fullscreen",fullscreen_get,fullscreen_change},
     {"fps",fps_get,fps_change},
+    {"render_res",render_get,render_change},
+    {"shadows",shadow_get,shadow_change},
 };
 static const PortSetting *volatile focused_setting;
 

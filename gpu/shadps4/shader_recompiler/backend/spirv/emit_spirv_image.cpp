@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <cstdlib>
+#include "bbport_settings.h"
 #include <boost/container/static_vector.hpp>
 #include "shader_recompiler/backend/spirv/emit_spirv_instructions.h"
 #include "shader_recompiler/backend/spirv/spirv_emit_context.h"
@@ -158,6 +159,40 @@ Id EmitImageSampleExplicitLod(EmitContext& ctx, IR::Inst* inst, u32 handle, Id c
     return texture.is_integer ? ctx.OpBitcast(ctx.F32[4], sample) : sample;
 }
 
+
+// bbport: Shadow Quality Highest (bbport.ini shadow_quality=highest, read at start): each
+// shadow-map compare sample of a 2D depth texture becomes the mean of an n x n grid around the
+// original point (BbSettings::SoftShadowKernel: 3 x 3 a texel apart by default). Each is still
+// the compare sampler's bilinear 2x2, so a hard texel-sized step becomes a wide ramp. The
+// game's own taps and offsets are kept.
+template <typename Sample>
+static Id SoftShadowDref(EmitContext& ctx, const EmitContext::TextureDefinition& texture, Id image,
+                         Id coords, Sample&& sample) {
+    const auto& settings = BbSettings::Get();
+    const int n = settings.startup_shadow_quality >= 2 ? BbSettings::SoftShadowKernel().taps : 1;
+    if (n <= 1 || texture.view_type != AmdGpu::ImageType::Color2D || texture.is_integer) {
+        return sample(coords);
+    }
+    const float spacing = BbSettings::SoftShadowKernel().spacing;
+    const Id size = ctx.OpImageQuerySizeLod(ctx.S32[2], image, ctx.ConstS32(0));
+    const Id texel = ctx.OpFDiv(ctx.F32[2], ctx.ConstF32(1.0f, 1.0f),
+                                ctx.OpConvertSToF(ctx.F32[2], size));
+    Id sum{};
+    for (int y = 0; y < n; ++y) {
+        for (int x = 0; x < n; ++x) {
+            const float ox = (float(x) - float(n - 1) * 0.5f) * spacing;
+            const float oy = (float(y) - float(n - 1) * 0.5f) * spacing;
+            const Id at = ox == 0.0f && oy == 0.0f
+                              ? coords
+                              : ctx.OpFAdd(ctx.F32[2], coords,
+                                           ctx.OpFMul(ctx.F32[2], texel, ctx.ConstF32(ox, oy)));
+            const Id value = sample(at);
+            sum = Sirit::ValidId(sum) ? ctx.OpFAdd(ctx.F32[1], sum, value) : value;
+        }
+    }
+    return ctx.OpFMul(ctx.F32[1], sum, ctx.ConstF32(1.0f / float(n * n)));
+}
+
 Id EmitImageSampleDrefImplicitLod(EmitContext& ctx, IR::Inst* inst, u32 handle, Id coords, Id dref,
                                   Id bias, const IR::Value& offset) {
     if (const Id forced = ForcedSample(ctx, handle, true); Sirit::ValidId(forced)) {
@@ -171,8 +206,10 @@ Id EmitImageSampleDrefImplicitLod(EmitContext& ctx, IR::Inst* inst, u32 handle, 
     ImageOperands operands;
     operands.Add(spv::ImageOperandsMask::Bias, bias);
     operands.AddOffset(ctx, offset);
-    const Id sample = ctx.OpImageSampleDrefImplicitLod(result_type, sampled_image, coords, dref,
-                                                       operands.mask, operands.operands);
+    const Id sample = SoftShadowDref(ctx, texture, image, coords, [&](Id at) {
+        return ctx.OpImageSampleDrefImplicitLod(result_type, sampled_image, at, dref,
+                                                operands.mask, operands.operands);
+    });
     const Id sample_typed = texture.is_integer ? ctx.OpBitcast(ctx.F32[1], sample) : sample;
     return ctx.OpCompositeConstruct(ctx.F32[4], sample_typed, ctx.f32_zero_value,
                                     ctx.f32_zero_value, ctx.f32_zero_value);
@@ -191,8 +228,10 @@ Id EmitImageSampleDrefExplicitLod(EmitContext& ctx, IR::Inst* inst, u32 handle, 
     ImageOperands operands;
     operands.Add(spv::ImageOperandsMask::Lod, lod);
     operands.AddOffset(ctx, offset);
-    const Id sample = ctx.OpImageSampleDrefExplicitLod(result_type, sampled_image, coords, dref,
-                                                       operands.mask, operands.operands);
+    const Id sample = SoftShadowDref(ctx, texture, image, coords, [&](Id at) {
+        return ctx.OpImageSampleDrefExplicitLod(result_type, sampled_image, at, dref,
+                                                operands.mask, operands.operands);
+    });
     const Id sample_typed = texture.is_integer ? ctx.OpBitcast(ctx.F32[1], sample) : sample;
     return ctx.OpCompositeConstruct(ctx.F32[4], sample_typed, ctx.f32_zero_value,
                                     ctx.f32_zero_value, ctx.f32_zero_value);

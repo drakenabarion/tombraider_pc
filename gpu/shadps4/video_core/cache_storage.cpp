@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "bbport_settings.h"
 #include "common/elf_info.h"
 #include "common/io_file.h"
 #include "common/polyfill_thread.h"
@@ -110,7 +111,12 @@ void DataBase::Open() {
             mz_zip_writer_init_file(&zip_ar, cache_path.string().c_str(), 0);
         }
     } else {
-        cache_path = GetUserPath(PathType::CacheDir) / game_info.GameSerial();
+        // bbport: Shadow Quality Highest changes shadow shaders (emit_spirv_image.cpp): its own cache.
+        cache_path = GetUserPath(PathType::CacheDir) /
+                     (std::string{game_info.GameSerial()} +
+                      (BbSettings::Get().startup_shadow_quality >= 2
+                           ? std::string{"-softshadows-"} + BbSettings::SoftShadowKernel().name
+                           : std::string{}));
         if (!std::filesystem::exists(cache_path)) {
             std::filesystem::create_directories(cache_path);
         }

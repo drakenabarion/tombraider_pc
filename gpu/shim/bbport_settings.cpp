@@ -62,6 +62,15 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.debug_view = std::clamp(i, 0, DebugViewCount - 1);
     } else if (key == "show_fps") {
         v.show_fps = i != 0;
+    } else if (key == "render_res") {
+        int w = 0, h = 0;
+        if (std::sscanf(value.c_str(), "%dx%d", &w, &h) == 2 && w >= 640 && h >= 360 &&
+            w <= 3840 && h <= 2160) {
+            v.render_w = w;
+            v.render_h = h;
+        }
+    } else if (key == "shadow_quality") {
+        v.shadow_quality = value == "highest" ? 2 : value == "high" ? 1 : 0;
     } else if (key == "fps_limit") {
         v.fps_limit = std::clamp(i, 0, 1000);
     } else if (key == "fsr4_auto_exposure") {
@@ -141,6 +150,12 @@ void Load() {
     v.startup_model_lod = v.model_lod;
     v.startup_output_res = v.output_res;
     v.startup_live_resolution = v.live_resolution;
+    // As runtime_settings.c read them for the eboot patches.
+    if (const char* size = std::getenv("BB_RENDER_SIZE")) Set(v, "render_res", size);
+    if (const char* shadows = std::getenv("BB_SHADOW_QUALITY")) Set(v, "shadow_quality", shadows);
+    v.startup_render_w = v.render_w;
+    v.startup_render_h = v.render_h;
+    v.startup_shadow_quality = v.shadow_quality;
 }
 
 void ConfigureUpscalerSupport(bool fsr4, bool fsr411) {
@@ -233,6 +248,9 @@ void Save() {
     std::fprintf(file, "live_resolution=%s\n", v.live_resolution < 0 ? "auto"
                                                   : v.live_resolution ? "1" : "0");
     std::fprintf(file, "fps_limit=%d\n", v.fps_limit.load());
+    static constexpr const char* shadow_names[] = {"ps4", "high", "highest"};
+    std::fprintf(file, "render_res=%dx%d\nshadow_quality=%s\n", v.render_w.load(), v.render_h.load(),
+                 shadow_names[std::clamp(v.shadow_quality.load(), 0, 2)]);
     std::fclose(file);
     std::set<std::string> written;
     if (FILE* now = std::fopen(Path(), "r")) {
@@ -258,6 +276,26 @@ void Save() {
 extern "C" int bbgpu_fps_limit() {
     return Get().fps_limit.load();
 }
+extern "C" void bbgpu_render_res(int* w, int* h, int* startup_w, int* startup_h) {
+    const auto& v = Get();
+    *w = v.render_w;
+    *h = v.render_h;
+    *startup_w = v.startup_render_w;
+    *startup_h = v.startup_render_h;
+}
+extern "C" void bbgpu_set_render_res(int w, int h) {
+    Get().render_w = w;
+    Get().render_h = h;
+    Save();
+}
+extern "C" int bbgpu_shadow_quality(int* startup) {
+    *startup = Get().startup_shadow_quality;
+    return Get().shadow_quality;
+}
+extern "C" void bbgpu_set_shadow_quality(int quality) {
+    Get().shadow_quality = std::clamp(quality, 0, 2);
+    Save();
+}
 extern "C" void bbgpu_set_fps_limit(int fps) {
     Get().fps_limit = std::clamp(fps, 0, 1000);
     Save();
@@ -277,6 +315,22 @@ const char* PresetName(int preset) {
 const char* UpscalerName(int upscaler) {
     static constexpr const char* names[UpscalerCount] = {"off", "fsr3", "fsr4", "fsr411", "taa", "dlss"};
     return names[std::clamp(upscaler, 0, UpscalerCount - 1)];
+}
+
+const SoftShadow& SoftShadowKernel() {
+    static const SoftShadow kernel = [] {
+        int taps = 3;
+        float spacing = 1.0f;
+        if (const char* env = std::getenv("BB_SOFT_SHADOW")) {
+            std::sscanf(env, "%d,%f", &taps, &spacing);
+        }
+        taps = std::clamp(taps, 1, 6);
+        spacing = std::clamp(spacing, 0.25f, 4.0f);
+        static char name[32];
+        std::snprintf(name, sizeof(name), "%dx%.2f", taps, spacing);
+        return SoftShadow{taps, spacing, name};
+    }();
+    return kernel;
 }
 
 const char* FrameGenName(int frame_gen) {

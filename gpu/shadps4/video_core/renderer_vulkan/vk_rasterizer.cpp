@@ -4815,7 +4815,8 @@ void Rasterizer::CaptureImages() {
     for (const auto& [id, address] : dumps) {
         auto& img = texture_cache.GetImage(id);
         const u32 bpp = img.info.num_bits / 8;
-        if (img.info.props.is_depth || img.info.props.is_block || !bpp || bpp > 16) continue;
+        // Depth images: the depth aspect (D16 2 bytes, D32 4 bytes a texel; stencil left out).
+        if (img.info.props.is_block || !bpp || bpp > 16) continue;
         DumpCaptureImage(img, std::format("x{:03}_{:x}_{}x{}_fmt{}_bpp{}_uid{}", passes - 1,
                                           address, img.info.size.width, img.info.size.height,
                                           u32(img.info.pixel_format), bpp, img.image_uid));
@@ -4834,7 +4835,8 @@ void Rasterizer::CaptureImages() {
 
 void Rasterizer::DumpCaptureImage(VideoCore::Image& image, const std::string& name) {
     const u32 w = image.info.size.width, h = image.info.size.height;
-    const u32 bpp = std::max(1u, image.info.num_bits / 8);
+    const bool depth = image.info.props.is_depth;
+    const u32 bpp = depth ? (image.info.num_bits == 16 ? 2u : 4u) : std::max(1u, image.info.num_bits / 8);
     static const std::string dir = [] {
         const char* env = std::getenv("BB_CAPTURE_DIR");
         std::string d = std::string{env ? env : "."} + "/images";
@@ -4860,7 +4862,7 @@ void Rasterizer::DumpCaptureImage(VideoCore::Image& image, const std::string& na
     if (vmaCreateBuffer(instance.GetAllocator(), &buffer_ci, &alloc_ci, &buffer, &allocation,
                         &info) == VK_SUCCESS) {
         const vk::BufferImageCopy region{
-            .imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+            .imageSubresource = {depth ? vk::ImageAspectFlagBits::eDepth : vk::ImageAspectFlagBits::eColor, 0, 0, 1},
             .imageExtent = {w, h, 1},
         };
         scheduler.Record([img = image.GetImage(), buffer, region](vk::CommandBuffer cmdbuf) {

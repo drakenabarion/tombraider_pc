@@ -109,4 +109,10 @@ typedef struct {
     const unsigned char *patch;
 } RuntimeGuestCallback;
 const RuntimeGuestCallback *runtime_guest_callbacks(size_t *count);
+
+/* runtime_settings.c: render resolution, shadow quality and the memory they need. */
+void runtime_render_size(unsigned *w, unsigned *h);
+int runtime_shadow_quality(void);
+uint64_t runtime_gpu_heap_bytes(void);
+uint64_t runtime_direct_memory_mb(void);
 #endif

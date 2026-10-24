@@ -60,6 +60,16 @@ bool CaptureByFlip() {
     }();
     return value;
 }
+// BB_CAPTURE_FLIPS=<n>: with BB_CAPTURE_BY_FLIP, the recording ends n flips after it starts
+// (default 2; Tomb Raider queues the next frame's lighting before the flip).
+u64 CaptureFlips() {
+    static const u64 value = [] {
+        const char* env = std::getenv("BB_CAPTURE_FLIPS");
+        const long n = env ? std::strtol(env, nullptr, 10) : 2;
+        return u64(n >= 2 && n <= 16 ? n : 2);
+    }();
+    return value;
+}
 std::mutex display_mutex;
 std::vector<VAddr> display_buffers;
 // bbport: read on every draw; the game registers a handful of display buffers once.
@@ -202,7 +212,7 @@ void FrameCapture::BeginPass(const VideoCore::ImageInfo* const* colors, u32 num_
             pass_open = false;
             record_start_flip = now;
             state.store(Recording, std::memory_order_release);
-        } else if (state.load(std::memory_order_relaxed) == Recording && now >= record_start_flip + 2) {
+        } else if (state.load(std::memory_order_relaxed) == Recording && now >= record_start_flip + CaptureFlips()) {
             Write(last_presented.load(std::memory_order_relaxed));
             entries.clear();
             pending_sampled.clear();

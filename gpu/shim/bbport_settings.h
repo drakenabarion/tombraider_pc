@@ -71,6 +71,11 @@ struct Values {
     std::atomic<bool> show_fps{false};
     /// Frame limit with the fast vblank (BB_VBLANK_HZ=0); BB_FPS_LIMIT overrides. Live.
     std::atomic<int> fps_limit{60};
+    /// Applied at the next start (src/runtime_settings.c, probe.c): the game's render size and
+    /// shadow quality (0 PS4, 1 high, 2 highest). Startup values: what this session runs with.
+    std::atomic<int> render_w{1920}, render_h{1080};
+    std::atomic<int> shadow_quality{0};
+    int startup_render_w = 1920, startup_render_h = 1080, startup_shadow_quality = 0;
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.
     std::atomic<bool> fsr4_auto_exposure{true};
     std::atomic<bool> fsr4_invert_jitter{false};
@@ -125,5 +130,14 @@ float PresetScale(int preset);
 const char* PresetName(int preset);
 const char* UpscalerName(int upscaler);
 const char* FrameGenName(int frame_gen);
+/// Shadow Quality Highest's filter (emit_spirv_image.cpp): an n x n grid of compare samples,
+/// spacing in shadow-map texels. BB_SOFT_SHADOW=n,spacing (tests), default 3,1. name: the
+/// shader cache suffix, so each kernel keeps its own compiled shaders.
+struct SoftShadow {
+    int taps;
+    float spacing;
+    const char* name;
+};
+const SoftShadow& SoftShadowKernel();
 
 } // namespace BbSettings

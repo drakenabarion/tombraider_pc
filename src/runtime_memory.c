@@ -29,7 +29,8 @@ static uint64_t pool_size_bytes(void) {
     static uint64_t size;
     if (!size) {
         const char *env = getenv("BB_DMEM_MB");
-        uint64_t mb = env ? strtoull(env, NULL, 10) : 0;
+        /* Without BB_DMEM_MB: what the render resolution and shadow settings need. */
+        uint64_t mb = env ? strtoull(env, NULL, 10) : runtime_direct_memory_mb();
         if (mb < 5056 || mb > 16384) mb = 5056;
         size = mb * 1024 * 1024;
     }

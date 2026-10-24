@@ -695,6 +695,81 @@ static void patch_motion_blur_history(uint64_t image_size) {
     memcpy(image+at,fixed,sizeof(fixed)-1); /* the literals' NUL not copied */
     printf("Motion blur: history selection fixed for frame rates above 90\n");
 }
+/* Byte patches with the original bytes checked first: all or nothing for one setting. */
+typedef struct { uint64_t at; const char *original, *replacement; } EbootPatch;
+static size_t hex_bytes(const char *hex, unsigned char *out, size_t max) {
+    size_t n=0;
+    while (n<max && isxdigit((unsigned char)hex[0]) && isxdigit((unsigned char)hex[1])) {
+        unsigned v=0; sscanf(hex,"%2x",&v); out[n++]=(unsigned char)v; hex+=2;
+    }
+    return n;
+}
+static int apply_eboot_patches(const char *what, const EbootPatch *patches, size_t count, uint64_t image_size) {
+    unsigned char a[64], b[64];
+    for (size_t i=0;i<count;++i) {
+        const size_t n=hex_bytes(patches[i].original,a,sizeof(a));
+        if (patches[i].at+n>image_size || memcmp(image+patches[i].at,a,n)) {
+            printf("%s: game code at %#" PRIx64 " differs, left as is\n",what,patches[i].at);
+            return 0;
+        }
+    }
+    for (size_t i=0;i<count;++i) {
+        const size_t n=hex_bytes(patches[i].replacement,b,sizeof(b));
+        memcpy(image+patches[i].at,b,n);
+    }
+    return 1;
+}
+static void le32(char *out, uint32_t v) { /* 8 hex digits, little endian */
+    snprintf(out,9,"%02x%02x%02x%02x",v&0xff,(v>>8)&0xff,(v>>16)&0xff,(v>>24)&0xff);
+}
+/* Render resolution (bbport.ini render_res, runtime_settings.c): the game takes its size from
+ * a getter (0x74bfc0), four full-screen targets and a buffer attribute made at renderer start,
+ * and the percentage sizes of its screen-relative targets (0x753d9b); all are 1920x1080 on PS4.
+ * Its GPU heap (288 MiB, 0x75f6c2...) grows with the targets and the TressFX fragment lists.
+ * Shadow quality High: the shadow atlas 16384x8192 instead of 8192x4096 (0x7420b0...), the
+ * packer's two root squares 8192 (0x743aba), the texel budget x4 (0x7428db) and each light's
+ * request x4 instead of x2, between 512 and 4096 (0x742e15): every light keeps its share at
+ * twice the resolution. */
+static void patch_render_settings(uint64_t image_size) {
+    unsigned w=1920, h=1080;
+    runtime_render_size(&w,&h);
+    const uint64_t heap=runtime_gpu_heap_bytes();
+    char ws[9], hs[9], hp[9], r[10][40];
+    le32(ws,w); le32(hs,h); le32(hp,(uint32_t)heap);
+    if (heap!=UINT64_C(0x12000000)) {
+        const EbootPatch p[]={{0x75f6c3,"00000012",hp},{0x75f7ba,"00000012",hp},{0x75f7d7,"00000012",hp},
+                              {0x75f86f,"00000012",hp},{0x75f880,"00000012",hp}};
+        if (apply_eboot_patches("GPU heap",p,5,image_size))
+            printf("GPU heap: %" PRIu64 " MiB (direct memory %" PRIu64 " MiB)\n",heap>>20,runtime_direct_memory_mb());
+    }
+    if (w!=1920 || h!=1080) {
+        snprintf(r[0],40,"c706%sc702%s",ws,hs);
+        snprintf(r[1],40,"be%sba%s",ws,hs);
+        snprintf(r[2],40,"41b8%s41b9%s",ws,hs);
+        snprintf(r[3],40,"69c3%s",ws);
+        snprintf(r[4],40,"4169c4%s",hs);
+        const EbootPatch p[]={{0x74bfc0,"c70680070000c70238040000",r[0]},{0x74817d,"be80070000ba38040000",r[1]},
+                              {0x7481c5,"be80070000ba38040000",r[1]},{0x74820d,"be80070000ba38040000",r[1]},
+                              {0x748270,"be80070000ba38040000",r[1]},{0x7484db,"41b88007000041b938040000",r[2]},
+                              {0x753d9b,"69c380070000",r[3]},{0x753db1,"4169c438040000",r[4]}};
+        if (apply_eboot_patches("Render resolution",p,8,image_size))
+            printf("Render resolution: %ux%u\n",w,h);
+    }
+    if (runtime_shadow_quality()>=1) {
+        const EbootPatch p[]={{0x7420b0,"be00200000ba00100000","be00400000ba00200000"},
+                              {0x7420f7,"be00200000ba00100000","be00400000ba00200000"},
+                              {0x7439a5,"be00200000ba00100000","be00400000ba00200000"},
+                              {0x7439eb,"be00200000ba00100000","be00400000ba00200000"},
+                              {0x743aba,"c785dcf7ffff00100000","c785dcf7ffff00200000"},
+                              {0x743ac4,"66c785d0f7ffff0010","66c785d0f7ffff0020"},
+                              {0x743ad6,"c785d4f7ffff00100000","c785d4f7ffff00200000"},
+                              {0x742e15,"01c0ba000800003d000800000f42d0","c1e002ba0010000039d00f42d06690"},
+                              {0x742e24,"b90001000081fa00010000","b90002000081fa00020000"},
+                              {0x7428db,"48b80000000000000002","48b80000000000000008"}};
+        if (apply_eboot_patches("Shadow quality",p,10,image_size))
+            printf("Shadow quality: high (atlas 16384x8192)\n");
+    }
+}
 static void patch_eop_tick_wait(uint64_t image_size) {
     static const char message[]="GetRenderFrameParams(frameToFreeInstancesFor)->m_gfxEopTick";
     unsigned char *text=NULL;
@@ -1021,6 +1096,7 @@ int main(int argc, char **argv) {
         install_game_callbacks(segments, ns, image_end);
         patch_eop_tick_wait(image_end);
         patch_motion_blur_history(image_end);
+        patch_render_settings(image_end);
     }
 #ifdef _WIN32
     printf("Guest TCB loads redirected to the TEB TLS slot: %" PRIu64 "\n", patch_tcb_loads(segments, ns));
