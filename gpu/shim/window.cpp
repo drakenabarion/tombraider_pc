@@ -1,4 +1,5 @@
 // bbport: SDL3 window for the Vulkan swapchain (X11 or Wayland).
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <SDL3/SDL.h>
@@ -16,6 +17,8 @@ int mouse_wheel{};
 u32 mouse_buttons{};
 std::atomic<bool> mouse_look{false}, mouse_captured{false};
 bool window_focused{true};
+// bbport: requests from other threads (the game's menus, runtime_menu.c), run by the window thread.
+std::atomic<bool> fullscreen_toggle{false};
 
 u32 MouseBit(u8 button) {
     switch (button) {
@@ -28,6 +31,18 @@ u32 MouseBit(u8 button) {
     }
 }
 } // namespace
+
+// bbport: the in-game "Quit Game" entry: the same clean exit as closing the window.
+extern "C" void bbgpu_request_quit(void) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_QUIT;
+    SDL_PushEvent(&event);
+}
+
+// bbport: the in-game fullscreen option, Alt+Enter and F11.
+extern "C" void bbgpu_toggle_fullscreen(void) {
+    fullscreen_toggle = true;
+}
 
 extern "C" void bbgpu_mouse_configure(int look) {
     mouse_look = look != 0;
@@ -144,8 +159,20 @@ bool WindowSDL::PollEvents() {
             mouse_buttons = 0;
         }
     }
+    if (fullscreen_toggle.exchange(false)) {
+        const bool full = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+        SDL_SetWindowFullscreen(window, !full);
+    }
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
+        if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && !text_active &&
+            (event.key.key == SDLK_F11 ||
+             ((event.key.key == SDLK_RETURN || event.key.key == SDLK_KP_ENTER) &&
+              (event.key.mod & SDL_KMOD_ALT)))) {
+            const bool full = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+            SDL_SetWindowFullscreen(window, !full);
+            continue;
+        }
         if (text_active && (event.type == SDL_EVENT_TEXT_INPUT || event.type == SDL_EVENT_KEY_DOWN)) {
             std::scoped_lock lock{text_mutex};
             if (event.type == SDL_EVENT_TEXT_INPUT) {

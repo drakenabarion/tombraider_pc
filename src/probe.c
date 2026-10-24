@@ -1,6 +1,7 @@
 /* Minimal x86-64 native loader experiment. Not a PS4 emulator or game port. */
 #define _GNU_SOURCE
 #include <stdint.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -584,7 +585,16 @@ static unsigned char *near_image_memory(size_t size) {
                                 size,MEM_RESERVE|MEM_COMMIT,PAGE_EXECUTE_READWRITE);
     }
 #else
-    (void)size;
+    /* rel32 jumps: a fresh mapping within 2 GiB above the image (MAP_FIXED_NOREPLACE leaves
+     * existing mappings alone). */
+    uint64_t end_of_image=round_page(guest_image_size ? guest_image_size : 1);
+    uint64_t base=((uint64_t)(uintptr_t)image+end_of_image+(32u<<20)+0xffff)&~(uint64_t)0xffff;
+    for (uint64_t step=0;!memory && step<(1900ull<<20);step+=1u<<16) {
+        void *want=(void *)(uintptr_t)(base+step);
+        void *got=mmap(want,size,PROT_READ|PROT_WRITE|PROT_EXEC,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED_NOREPLACE,-1,0);
+        if (got==want) memory=got;
+        else if (got!=MAP_FAILED) munmap(got,size);
+    }
 #endif
     return memory;
 }
@@ -952,6 +962,21 @@ int main(int argc, char **argv) {
         memcpy(image + relocs[i].target, &value, 8);
     }
     if (patch_file) apply_patches(patch_file, segments, ns, relocs, nr);
+    /* BB_EBOOT_BYTES=<vaddr>=<hex bytes>[,...] (experiments): byte writes at eboot addresses
+     * (hex, as in a disassembly of eboot.elf), after relocation and the patch file. */
+    for (const char *p=getenv("BB_EBOOT_BYTES"); p && *p; ) {
+        char *end; uint64_t at=strtoull(p,&end,16), first=at;
+        if (*end!='=') break;
+        p=end+1;
+        while (isxdigit((unsigned char)p[0]) && isxdigit((unsigned char)p[1])) {
+            unsigned v=0; sscanf(p,"%2x",&v);
+            if (!mapped(segments,ns,at,1)) fail("BB_EBOOT_BYTES outside the image");
+            ((unsigned char *)image)[at++]=(unsigned char)v; p+=2;
+        }
+        printf("Eboot bytes: %" PRIu64 " written at 0x%" PRIx64 "\n",at-first,first);
+        if (*p!=',') break;
+        ++p;
+    }
     install_guest_hooks(segments, ns);
     {
         uint64_t image_end=0;

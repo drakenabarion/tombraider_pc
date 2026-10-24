@@ -37,6 +37,10 @@ void NotePresent();
 /// The menu is open or a text entry is shown: the game's input is held neutral.
 bool CapturesInput();
 
+/// Any thread: the "Quit Tomb Raider?" Yes/No box (default No). It takes the input while shown;
+/// Yes quits like the window's close button.
+void ShowQuitConfirm();
+
 /// Window thread: the game's text dialog (sceImeDialog). Shown as a box on screen until
 /// `active` is false; typing goes to the window (sdl_window), the box only displays it.
 void SetTextEntry(bool active, const std::string& prompt, const std::string& text);

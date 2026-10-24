@@ -55,6 +55,10 @@ bool l3_down = false, r3_down = false;
 bool dirty = false; // settings changed while open: saved on close
 // The game's text dialog (SetTextEntry), guarded by imgui_mutex.
 bool text_entry_active = false;
+// The "Quit Game" confirmation (the main menu's added item, runtime_menu.c): shown until
+// answered; 0 = No (the default), 1 = Yes.
+std::atomic<bool> quit_confirm_active{false};
+int quit_confirm_choice = 0;
 std::string text_entry_prompt, text_entry_text;
 float base_scale = 1.0f;
 
@@ -434,6 +438,91 @@ void TextEntryBox() {
     ImGui::End();
 }
 
+void QuitConfirmBox() {
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                                   viewport->WorkPos.y + viewport->WorkSize.y * 0.5f),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(viewport->WorkSize.x * 0.24f, 0.0f),
+                                        ImVec2(viewport->WorkSize.x * 0.8f, FLT_MAX));
+    ImGui::SetNextWindowBgAlpha(0.92f);
+    ImGui::Begin("##quit_confirm", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoFocusOnAppearing);
+    ImGui::SetWindowFontScale(1.4f);
+    ImGui::TextColored(ImVec4(0.85f, 0.72f, 0.45f, 1.0f), "Quit Tomb Raider?");
+    ImGui::Spacing();
+    const ImVec4 on(1.0f, 1.0f, 1.0f, 1.0f), off(0.55f, 0.55f, 0.55f, 1.0f);
+    ImGui::TextColored(quit_confirm_choice == 1 ? on : off, quit_confirm_choice == 1 ? "> Yes" : "  Yes");
+    ImGui::SameLine(0.0f, 48.0f * base_scale);
+    ImGui::TextColored(quit_confirm_choice == 0 ? on : off, quit_confirm_choice == 0 ? "> No" : "  No");
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::Spacing();
+    ImGui::TextDisabled("Cross / Enter: choose    Circle / Esc: back");
+    ImGui::End();
+}
+
+// Answers the confirmation: Yes quits like the window's close button.
+void AnswerQuitConfirm(bool yes) {
+    quit_confirm_active = false;
+    if (yes) {
+        SDL_Event quit{};
+        quit.type = SDL_EVENT_QUIT;
+        SDL_PushEvent(&quit);
+    }
+}
+
+// The confirmation's input (window thread): it takes every key and button while shown.
+bool HandleQuitConfirm(const SDL_Event& event) {
+    if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
+        switch (event.key.key) {
+        case SDLK_LEFT: case SDLK_RIGHT: case SDLK_UP: case SDLK_DOWN: case SDLK_TAB:
+            quit_confirm_choice ^= 1;
+            break;
+        case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_SPACE:
+            AnswerQuitConfirm(quit_confirm_choice == 1);
+            break;
+        case SDLK_ESCAPE: case SDLK_BACKSPACE:
+            AnswerQuitConfirm(false);
+            break;
+        default:
+            break;
+        }
+        return true;
+    }
+    if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+        switch (event.gbutton.button) {
+        case SDL_GAMEPAD_BUTTON_DPAD_LEFT: case SDL_GAMEPAD_BUTTON_DPAD_RIGHT:
+        case SDL_GAMEPAD_BUTTON_DPAD_UP: case SDL_GAMEPAD_BUTTON_DPAD_DOWN:
+            quit_confirm_choice ^= 1;
+            break;
+        case SDL_GAMEPAD_BUTTON_SOUTH:
+            AnswerQuitConfirm(quit_confirm_choice == 1);
+            break;
+        case SDL_GAMEPAD_BUTTON_EAST:
+            AnswerQuitConfirm(false);
+            break;
+        default:
+            break;
+        }
+        return true;
+    }
+    if (event.type == SDL_EVENT_GAMEPAD_AXIS_MOTION &&
+        (event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX || event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY)) {
+        static bool tilted = false;
+        const bool now = event.gaxis.value > 20000 || event.gaxis.value < -20000;
+        if (now && !tilted) {
+            quit_confirm_choice ^= 1;
+        }
+        if (now || (event.gaxis.value > -8000 && event.gaxis.value < 8000)) {
+            tilted = now;
+        }
+        return true;
+    }
+    return event.type == SDL_EVENT_KEY_UP || event.type == SDL_EVENT_GAMEPAD_BUTTON_UP;
+}
+
 void FpsCounter() {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float pad = 12.0f * base_scale;
@@ -539,6 +628,9 @@ bool HandleEvent(const SDL_Event& event) {
     if (!initialized) {
         return false;
     }
+    if (quit_confirm_active && !menu_open) {
+        return HandleQuitConfirm(event);
+    }
     ImGuiIO& io = ImGui::GetIO();
     const bool is_open = menu_open;
     switch (event.type) {
@@ -625,11 +717,18 @@ bool HandleEvent(const SDL_Event& event) {
 }
 
 bool Visible() {
-    return initialized && (menu_open || text_entry_active || BbSettings::Get().show_fps);
+    return initialized &&
+           (menu_open || text_entry_active || quit_confirm_active || BbSettings::Get().show_fps);
 }
 
 bool CapturesInput() {
-    return menu_open || text_entry_active;
+    return menu_open || text_entry_active || quit_confirm_active;
+}
+
+void ShowQuitConfirm() {
+    std::scoped_lock lock{imgui_mutex};
+    quit_confirm_choice = 0;
+    quit_confirm_active = true;
 }
 
 void SetTextEntry(bool active, const std::string& prompt, const std::string& text) {
@@ -694,6 +793,9 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     }
     if (BbSettings::Get().show_fps && !menu_open) {
         FpsCounter();
+    }
+    if (quit_confirm_active) {
+        QuitConfirmBox();
     }
     if (text_entry_active) {
         TextEntryBox();

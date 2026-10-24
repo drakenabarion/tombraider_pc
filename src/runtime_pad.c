@@ -495,7 +495,24 @@ static const unsigned char u2_focus_reset[]={
     0xcd,0x41,                                    /* trap: int 0x41 */
 };
 _Static_assert(sizeof(u2_focus_reset)==sizeof(u2_focus_assert_code),"same size");
+/* Tomb Raider: the game's ExternalInterface handler (the menus' ExternalInterface.call), see
+ * runtime_menu.c. */
+void __attribute__((ms_abi)) runtime_menu_external_call(uint64_t self, uint64_t name, uint64_t image, uint64_t r14);
+static const unsigned char tr_external_call_code[]={
+    0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x81,0xec,0x78,0x01,0x00,0x00,
+    0x41,0x89,0xcd,0x48,0x89,0xd3,0x49,0x89,0xf6,0x49,0x89,0xff,
+};
+void __attribute__((ms_abi)) runtime_menu_invoke(uint64_t self, uint64_t name, uint64_t image, uint64_t r14);
+static const unsigned char tr_menu_invoke_code[]={
+    0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x81,0xec,0x18,0x01,0x00,0x00,
+    0x45,0x89,0xc7,0x49,0x89,0xce,0x49,0x89,0xd4,0x48,0x89,0xf1,0x48,0x89,0xfb,
+};
+void runtime_menu_pad(uint32_t buttons);
 static const RuntimeGuestCallback guest_callbacks[]={
+    {"TR menu Invoke (BB_TRACE_MENU)",0xcad800,tr_menu_invoke_code,sizeof(tr_menu_invoke_code),6,
+     runtime_menu_invoke,NULL},
+    {"TR menu ExternalInterface (quit, fullscreen)",0xd1ba80,tr_external_call_code,
+     sizeof(tr_external_call_code),6,runtime_menu_external_call,NULL},
     {"U1 follow camera (mouse)",0xaecf0,u1_follow_camera_code,sizeof(u1_follow_camera_code),6,u1_follow_camera,NULL},
     {"U1 pad update (mouse)",0x117200,u1_pad_update_code,sizeof(u1_pad_update_code),6,u1_pad_update,NULL},
     {"U1 joypad sticks (mouse)",0x11784e,u1_joypad_sticks_code,sizeof(u1_joypad_sticks_code),5,u1_joypad_sticks,NULL},
@@ -775,6 +792,7 @@ static void sample(PadData *d) {
         if (d->buttons) d->buttons=0;
         else hold_after_capture=0;
     }
+    runtime_menu_pad(d->buttons);
 }
 
 static ABI int32_t pad_init(void) { pthread_mutex_lock(&lock); initialized=1; pthread_mutex_unlock(&lock); return 0; }

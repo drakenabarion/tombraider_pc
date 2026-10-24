@@ -105,10 +105,24 @@ static int translate(const char *guest,char *out,size_t size) {
         size_t n=strlen(mounts[i].guest);
         if (!strncmp(buffer,mounts[i].guest,n) && (buffer[n]=='/' || !buffer[n]) && n>best) { best=n; m=&mounts[i]; }
     }
-    int result=0;
+    int result=0, game_files=0;
     if (!m) result=ENOENT;
     else if ((size_t)snprintf(out,size,"%s%s",m->host,buffer+best)>=size) result=ENAMETOOLONG;
+    else game_files=!strcmp(m->guest,"/app0") || !strcmp(m->guest,"/hostapp");
     pthread_mutex_unlock(&lock);
+    /* BB_GAME_OVERRIDES=<folder>: a game file there (same relative path) is read instead of the
+     * game's own (Tomb Raider: the rebuilt PATCH0 archive with the port's menu entries). */
+    const char *overrides=game_files ? getenv("BB_GAME_OVERRIDES") : NULL;
+    if (overrides && *overrides) {
+        char alternative[1024];
+        struct stat st;
+        if ((size_t)snprintf(alternative,sizeof(alternative),"%s%s",overrides,buffer+best)<sizeof(alternative) &&
+            !stat(alternative,&st) && S_ISREG(st.st_mode) && strlen(alternative)<size) {
+            static unsigned reported;
+            if (__atomic_fetch_add(&reported,1,__ATOMIC_RELAXED)<16) printf("Overrides: %s -> %s\n",guest,alternative);
+            snprintf(out,size,"%s",alternative);
+        }
+    }
     if (result==ENOENT) fprintf(stderr,"Runtime: no mount for guest path %s\n",guest);
     return result;
 }
