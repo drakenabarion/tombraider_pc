@@ -71,6 +71,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         }
     } else if (key == "shadow_quality") {
         v.shadow_quality = value == "highest" ? 2 : value == "high" ? 1 : 0;
+    } else if (key == "fullscreen") {
+        v.fullscreen = i != 0 ? 1 : 0;
     } else if (key == "hair_shadows") {
         v.hair_shadows = i != 0;
     } else if (key == "fps_limit") {
@@ -254,6 +256,7 @@ void Save() {
     std::fprintf(file, "render_res=%dx%d\nshadow_quality=%s\n", v.render_w.load(), v.render_h.load(),
                  shadow_names[std::clamp(v.shadow_quality.load(), 0, 2)]);
     std::fprintf(file, "hair_shadows=%d\n", int(v.hair_shadows.load()));
+    if (v.fullscreen >= 0) std::fprintf(file, "fullscreen=%d\n", v.fullscreen.load());
     std::fclose(file);
     std::set<std::string> written;
     if (FILE* now = std::fopen(Path(), "r")) {

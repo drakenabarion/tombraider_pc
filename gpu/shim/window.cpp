@@ -7,6 +7,7 @@
 #include "common/logging/log.h"
 #include "sdl_window.h"
 #include "bbport_overlay.h"
+#include "bbport_settings.h"
 
 namespace {
 // bbport: mouse input for runtime_pad.c (keyboard and mouse controls). The window thread adds
@@ -38,6 +39,12 @@ extern "C" void bbgpu_request_quit(void) {
     SDL_Event event{};
     event.type = SDL_EVENT_QUIT;
     SDL_PushEvent(&event);
+}
+
+// bbport: a user's fullscreen choice is kept in bbport.ini for the next start and the launcher.
+static void SaveFullscreen(bool full) {
+    BbSettings::Get().fullscreen = full ? 1 : 0;
+    BbSettings::Save();
 }
 
 // bbport: the in-game fullscreen option, Alt+Enter and F11.
@@ -78,8 +85,12 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height_);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_VULKAN_BOOLEAN, true);
+    // bbport: BB_FULLSCREEN if set, otherwise bbport.ini fullscreen (the in-game option, F11 and
+    // Alt+Enter save it; the launcher reads and writes the same key).
     const char* fullscreen = std::getenv("BB_FULLSCREEN");
-    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, fullscreen && fullscreen[0] == '1');
+    const bool start_full = fullscreen && fullscreen[0] ? fullscreen[0] == '1'
+                                                        : BbSettings::Get().fullscreen.load() == 1;
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, start_full);
     base_title = title;
     window = SDL_CreateWindowWithProperties(props);
     SDL_DestroyProperties(props);
@@ -166,6 +177,7 @@ bool WindowSDL::PollEvents() {
     if (fullscreen_toggle.exchange(false)) {
         const bool full = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
         SDL_SetWindowFullscreen(window, !full);
+        SaveFullscreen(!full);
     }
     fullscreen_now = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
     SDL_Event event;
@@ -176,6 +188,7 @@ bool WindowSDL::PollEvents() {
               (event.key.mod & SDL_KMOD_ALT)))) {
             const bool full = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
             SDL_SetWindowFullscreen(window, !full);
+            SaveFullscreen(!full);
             continue;
         }
         if (text_active && (event.type == SDL_EVENT_TEXT_INPUT || event.type == SDL_EVENT_KEY_DOWN)) {

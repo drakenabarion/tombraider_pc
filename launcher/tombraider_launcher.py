@@ -221,6 +221,30 @@ def ini_path():
     return Path(os.environ.get('BB_CONFIG', DATA_DIR / 'bbport.ini'))
 
 
+def get_ini(key):
+    """A bbport.ini value, or None when the file or the key is missing."""
+    try:
+        for line in ini_path().read_text(encoding='utf-8').splitlines():
+            if '=' in line and not line.lstrip().startswith('#'):
+                name, value = line.split('=', 1)
+                if name.strip() == key:
+                    return value.strip()
+    except OSError:
+        pass
+    return None
+
+
+# Settings the game also changes (its Options menu, F11): bbport.ini holds them for both.
+SHARED_FLAGS = ('fullscreen', 'show_fps')
+
+
+def sync_from_ini(app):
+    for key in SHARED_FLAGS:
+        value = get_ini(key)
+        if value is not None:
+            app[key] = value == '1'
+
+
 def set_ini(key, value):
     """bbport.ini (read by the game; the in-game menu edits it): one key rewritten in place."""
     path = ini_path()
@@ -321,7 +345,7 @@ def game_environment(s, start=None):
     env['BB_LANGUAGE'] = s['language']
     if str(s['player_name']).strip():
         env['BB_USER_NAME'] = str(s['player_name']).strip()
-    env['BB_FULLSCREEN'] = '1' if s['fullscreen'] else '0'
+    # Fullscreen: bbport.ini (written by collect(); the game's menu and F11 change it too).
     env['BB_PRESENT_MODE'] = s['present_mode']
     env['BB_VBLANK_HZ'] = '0'  # frame rate: fps_limit in bbport.ini (Options > Display)
     env['BB_WINDOW_SIZE'] = str(s.get('window_size') or '1920x1080')
@@ -377,6 +401,7 @@ class Launcher:
         self.tk, self.ttk, self.filedialog, self.messagebox = tk, ttk, filedialog, messagebox
         self.root = root
         self.app = {**APP_DEFAULTS, **load_json(CONFIG_FILE, {})}
+        sync_from_ini(self.app)
         self.vars = {}
         self.process = self.job = None
         self.entered, self.last_problem, self.stopping = False, '', False
@@ -1202,7 +1227,8 @@ class Launcher:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         CONFIG_FILE.write_text(json.dumps(self.app, indent=2) + '\n', encoding='utf-8')
         try:
-            set_ini('show_fps', '1' if self.app['show_fps'] else '0')
+            for key in SHARED_FLAGS:
+                set_ini(key, '1' if self.app[key] else '0')
         except OSError:
             pass
 
@@ -1263,6 +1289,11 @@ class Launcher:
                 item = self.output.get_nowait()
                 if isinstance(item, tuple):
                     code = item[0]
+                    # The game may have changed shared settings (fullscreen, FPS overlay).
+                    sync_from_ini(self.app)
+                    for key in SHARED_FLAGS:
+                        if key in self.vars:
+                            self.vars[key].set(self.app[key])
                     self.append(_('\n— the game exited (code {}) —\n').format(code))
                     self.process = None
                     if self.job:

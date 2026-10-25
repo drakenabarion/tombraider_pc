@@ -78,6 +78,8 @@ struct Values {
     /// TressFX hair drawn into the shadow atlas (Lara's hair shadows); off skips that pass
     /// (vk_rasterizer.cpp). Live.
     std::atomic<bool> hair_shadows{true};
+    /// Fullscreen at start (window.cpp); -1: not chosen yet (windowed). BB_FULLSCREEN overrides.
+    std::atomic<int> fullscreen{-1};
     int startup_render_w = 1920, startup_render_h = 1080, startup_shadow_quality = 0;
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.
     std::atomic<bool> fsr4_auto_exposure{true};
