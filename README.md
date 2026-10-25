@@ -33,7 +33,6 @@ Known problems (as of October 2026):
   stutter until compiled. Run with `BB_PIPELINE_CACHE=0` for now (the cache is off while the port
   is being debugged).
 - `run.sh` is still Virtual-On's and does not work for this game. Use `run.py` (or the AppImage).
-- Windows: the 0.2.x fixes are not in a Windows build yet (0.1.0 has one).
 - Online features report offline.
 
 Updates will be slow for a while: I have a busy few days ahead.
