@@ -44,7 +44,7 @@ CONFIG_FILE = CONFIG_DIR / 'settings.json'
 NAME = 'Tomb Raider'
 AUTHOR = 'drakenabarion'
 # This build; GitHub release tags are v<VERSION> (their digits are compared).
-VERSION = '0.2.1'
+VERSION = '0.3.0'
 RELEASES_API = 'https://api.github.com/repos/drakenabarion/tombraider_pc/releases/latest'
 RELEASES_PAGE = 'https://github.com/drakenabarion/tombraider_pc/releases/latest'
 UPDATE_DIR = Path(tempfile.gettempdir()) / 'tombraider-update'
@@ -71,14 +71,21 @@ LANGUAGES = [('1', 'English (United States)'), ('18', 'English (United Kingdom)'
              ('12', 'Finnish'), ('13', 'Swedish'), ('14', 'Danish'), ('15', 'Norwegian')]
 PRESENT_MODES = [('Mailbox', 'Mailbox (low latency, no tearing)'), ('Fifo', 'FIFO (VSync)'),
                  ('FifoRelaxed', 'FIFO Relaxed'), ('Immediate', 'Immediate (tearing)')]
-# The display rate (BB_VBLANK_HZ): kept at 60 from the Virtual-On launcher, which counts frames;
-# Tomb Raider runs at 60 too. Revisit when uncapped frame rates are tried.
-FRAME_RATES = [('60', '60 FPS (as on PS4)')]
-# The games render 1920x1080; the window (or the screen in fullscreen) gets that image scaled
-# to its size: FSR 1 (EASU) or bilinear, then RCAS sharpening (BB_RCAS_ATTENUATION, lower
-# is sharper).
+# The game's Options > Display settings, kept in bbport.ini with the launcher's (shared both ways).
+# Frame rate (fps_limit): above 60 the game was never run on PS4.
+FRAME_RATES = [('30', '30 FPS'), ('40', '40 FPS'), ('60', '60 FPS (as on PS4)'),
+               ('120', '120 FPS (experimental)'), ('144', '144 FPS (experimental)'),
+               ('240', '240 FPS (experimental)')]
+# The resolution the game renders at (render_res; applied at start, src/runtime_settings.c).
+RENDER_SIZES = [('1280x720', '1280 × 720'), ('1600x900', '1600 × 900'),
+                ('1920x1080', '1920 × 1080 (as on PS4)'), ('2560x1440', '2560 × 1440'),
+                ('3200x1800', '3200 × 1800'), ('3840x2160', '3840 × 2160 (4K)')]
+SHADOW_QUALITIES = [('ps4', 'PS4'), ('high', 'High (twice the resolution)'),
+                    ('highest', 'Highest (also softer edges)')]
+# The window in windowed mode; fullscreen uses the desktop's size. The rendered image is
+# scaled to it: FSR 1 (EASU) or bilinear, then RCAS sharpening (lower attenuation is sharper).
 WINDOW_SIZES = [('1280x720', '1280 × 720'), ('1600x900', '1600 × 900'),
-                ('1920x1080', "1920 × 1080 (the games' own)"), ('2560x1440', '2560 × 1440'),
+                ('1920x1080', '1920 × 1080'), ('2560x1440', '2560 × 1440'),
                 ('3840x2160', '3840 × 2160 (4K)')]
 SCALERS = [('fsr1', 'FSR 1 (AMD FidelityFX, sharp)'), ('bilinear', 'Smooth (bilinear)')]
 SHARPENING = [('off', 'Off'), ('1000', 'Low'), ('500', 'Medium'), ('250', 'High'), ('0', 'Maximum')]
@@ -143,7 +150,8 @@ RESERVED_KEYS = {'Insert': 'Insert opens the in-game settings menu.',
                  'Alt_L': 'Left Alt frees the mouse cursor while held.'}
 
 APP_DEFAULTS = {'game_dir': '', 'user_dir': '', 'start': 'game', 'language': '1', 'player_name': '',
-                'fullscreen': False, 'present_mode': 'Mailbox', 'frame_rate': '60', 'show_fps': False,
+                'fullscreen': False, 'present_mode': 'Mailbox', 'fps_limit': '60', 'show_fps': False,
+                'render_res': '1920x1080', 'shadow_quality': 'ps4', 'hair_shadows': True,
                 'window_size': '1920x1080', 'scaler': 'fsr1', 'sharpening': '500',
                 'anti_aliasing': 'off', 'aa_sharpness': '0.2', 'frame_generation': 'off',
                 'frame_gen_multiplier': '2', 'extra_env': '', 'close_on_play': False,
@@ -235,7 +243,8 @@ def get_ini(key):
 
 
 # Settings the game also changes (its Options menu, F11): bbport.ini holds them for both.
-SHARED_FLAGS = ('fullscreen', 'show_fps')
+SHARED_FLAGS = ('fullscreen', 'show_fps', 'hair_shadows')
+SHARED_CHOICES = ('fps_limit', 'render_res', 'shadow_quality', 'window_size', 'scaler', 'sharpening')
 
 
 def sync_from_ini(app):
@@ -243,6 +252,17 @@ def sync_from_ini(app):
         value = get_ini(key)
         if value is not None:
             app[key] = value == '1'
+    for key in SHARED_CHOICES:
+        value = get_ini(key)
+        if value is not None:
+            app[key] = value
+
+
+def write_shared(app):
+    for key in SHARED_FLAGS:
+        set_ini(key, '1' if app[key] else '0')
+    for key in SHARED_CHOICES:
+        set_ini(key, str(app[key]))
 
 
 def set_ini(key, value):
@@ -348,12 +368,7 @@ def game_environment(s, start=None):
     # Fullscreen: bbport.ini (written by collect(); the game's menu and F11 change it too).
     env['BB_PRESENT_MODE'] = s['present_mode']
     env['BB_VBLANK_HZ'] = '0'  # frame rate: fps_limit in bbport.ini (Options > Display)
-    env['BB_WINDOW_SIZE'] = str(s.get('window_size') or '1920x1080')
-    env['BB_FSR1'] = '1' if s.get('scaler', 'fsr1') == 'fsr1' else '0'
-    sharpening = str(s.get('sharpening') or 'off')
-    env['BB_RCAS'] = '0' if sharpening == 'off' else '1'
-    if sharpening != 'off':
-        env['BB_RCAS_ATTENUATION'] = sharpening
+    # Window size, upscaling, sharpening, frame rate, render resolution, shadows: bbport.ini.
     # Not wired up for Tomb Raider (no scene pass or motion vectors yet): off whatever was saved.
     env['BB_UPSCALER'] = 'off'
     env['BB_FRAME_GEN'] = 'off'
@@ -993,24 +1008,26 @@ class Launcher:
         self.row(f, _('Player name'), name, _('Shown where the game uses the PSN name.'))
 
     def build_display(self):
-        f = self.page('display', _('Display'), _('How the game window is shown.'))
+        f = self.page('display', _('Display'),
+                      _('The same settings as the game\'s Options > Display; a change in either is kept for both.'))
         self.check(f, 'fullscreen', _('Fullscreen'))
         self.row(f, _('Presentation'), self.choice(f, 'present_mode', PRESENT_MODES, 34),
                  _('Mailbox shows each frame as soon as it is ready without tearing; FIFO waits for the display.'))
-        # The games are paced by the frame (120 FPS runs them at double speed), so the frame rate
-        # stays at 60. Temporal anti-aliasing, DLSS and frame generation need the game's scene pass
-        # and motion vectors wired up (docs/upscaler.md: done for Bloodborne and Uncharted, not yet
-        # for Tomb Raider), so those options are not offered.
+        self.row(f, _('Frame rate'), self.choice(f, 'fps_limit', FRAME_RATES, 34),
+                 _('Above 60 is experimental: the game was made for 30 and 60.'))
         self.section(f, _('Resolution'))
+        self.row(f, _('Render resolution'), self.choice(f, 'render_res', RENDER_SIZES, 34),
+                 _('The resolution the game renders at. Higher needs a stronger GPU and more memory.'))
         self.row(f, _('Window size'), self.choice(f, 'window_size', WINDOW_SIZES, 34),
-                 _('The games render at 1920 × 1080. A larger window, or fullscreen on a 1440p or 4K '
-                   'screen, gets the image upscaled to fit.'))
+                 _('In windowed mode. Fullscreen uses the desktop\'s resolution.'))
         self.row(f, _('Upscaling'), self.choice(f, 'scaler', SCALERS, 34),
-                 _('FSR 1 keeps edges sharp when the image is enlarged; bilinear is softer.'))
+                 _('How the image is fitted to the window or screen when their sizes differ. FSR 1 keeps edges sharp; bilinear is softer.'))
         self.row(f, _('Sharpening'), self.choice(f, 'sharpening', SHARPENING, 34),
-                 _('AMD RCAS after FSR 1 (only while the image is enlarged).'))
-        self.note(f, _('The games run at 60 FPS, as on the PS4. Anti-aliasing (TAA, FSR, DLSS) and frame '
-                       'generation are not available for Tomb Raider yet.'))
+                 _('AMD RCAS after scaling, while the image is scaled.'))
+        self.section(f, _('Shadows'))
+        self.row(f, _('Shadow quality'), self.choice(f, 'shadow_quality', SHADOW_QUALITIES, 34),
+                 _('PS4: the original shadows. High: twice the resolution. Highest: also softer edges.'))
+        self.check(f, 'hair_shadows', _('Hair shadows (off: a more stable image)'))
         self.check(f, 'show_fps', _('Show the FPS counter'))
 
     def build_controls(self):
@@ -1227,8 +1244,7 @@ class Launcher:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         CONFIG_FILE.write_text(json.dumps(self.app, indent=2) + '\n', encoding='utf-8')
         try:
-            for key in SHARED_FLAGS:
-                set_ini(key, '1' if self.app[key] else '0')
+            write_shared(self.app)
         except OSError:
             pass
 
@@ -1291,7 +1307,7 @@ class Launcher:
                     code = item[0]
                     # The game may have changed shared settings (fullscreen, FPS overlay).
                     sync_from_ini(self.app)
-                    for key in SHARED_FLAGS:
+                    for key in SHARED_FLAGS + SHARED_CHOICES:
                         if key in self.vars:
                             self.vars[key].set(self.app[key])
                     self.append(_('\n— the game exited (code {}) —\n').format(code))

@@ -15,7 +15,9 @@ ROWS = [('fullscreen', 'Fullscreen', 'Show the game on the whole screen or in a 
         ('fps', 'Frame Rate', 'Frames per second. Above 60 is experimental: the game was made for 30 and 60.'),
         ('render_res', 'Render Resolution', 'The resolution the game renders at. Applies the next time the game starts.'),
         ('shadows', 'Shadow Quality', 'PS4: the original shadows. High: twice the resolution. Highest: also softer edges. Applies the next time the game starts.'),
-        ('hair_shadows', 'Hair Shadows', "Shadows cast by Lara's hair. Off removes their flicker for a more stable image.")]
+        ('hair_shadows', 'Hair Shadows', "Shadows cast by Lara's hair. Off removes their flicker for a more stable image."),
+        ('scaler', 'Upscaling', 'How the image is fitted to the window or screen when their sizes differ. FSR 1 keeps edges sharp.'),
+        ('sharpening', 'Sharpening', 'AMD RCAS sharpening after the image is scaled to the window or screen.')]
 
 src = open(sys.argv[1], encoding='utf-8').read().replace('\r', '')
 # trace() calls: the game's debug output, nothing reads it (keeps the movie in its space).

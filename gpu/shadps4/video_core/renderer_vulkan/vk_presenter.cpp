@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "bbport_settings.h"
 #include "common/debug.h"
 #include "common/elf_info.h"
 #include "common/io_file.h"
@@ -43,6 +44,18 @@
 #endif
 
 namespace Vulkan {
+
+// bbport: Upscaling and Sharpening (bbport.ini scaler, sharpening; in-game menu and launcher):
+// read every frame, so a menu change shows at once.
+template <typename Settings>
+static void RefreshScaling(Settings& fsr) {
+    const auto& s = BbSettings::Get();
+    fsr.enable = s.scaler.load(std::memory_order_relaxed) == 1;
+    const int sharpening = s.sharpening.load(std::memory_order_relaxed);
+    fsr.use_rcas = sharpening >= 0;
+    fsr.rcas_attenuation = float(std::max(sharpening, 0)) / 1000.f;
+}
+
 
 bool CanBlitToSwapchain(const vk::PhysicalDevice physical_device, vk::Format format) {
     const vk::FormatProperties props{physical_device.getFormatProperties(format)};
@@ -510,6 +523,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     }
     expected_ratio = static_cast<float>(image_size.width) / static_cast<float>(image_size.height);
 
+    RefreshScaling(fsr_settings);
     image_view = fsr_pass.Render(cmdbuf, image_view, image_size, {frame->width, frame->height},
                                  fsr_settings, frame->is_hdr);
 
@@ -552,6 +566,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
                 .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
             };
             cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_target});
+            RefreshScaling(fsr_settings);
             const auto scaled = fsr_pass.Render(cmdbuf, source, hudless_size,
                                                 {frame->width, frame->height}, fsr_settings,
                                                 frame->is_hdr);

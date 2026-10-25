@@ -71,6 +71,17 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         }
     } else if (key == "shadow_quality") {
         v.shadow_quality = value == "highest" ? 2 : value == "high" ? 1 : 0;
+    } else if (key == "scaler") {
+        v.scaler = value == "fsr1" ? 1 : 0;
+    } else if (key == "sharpening") {
+        v.sharpening = value == "off" ? -1 : std::clamp(i, 0, 1000);
+    } else if (key == "window_size") {
+        int w = 0, h = 0;
+        if (std::sscanf(value.c_str(), "%dx%d", &w, &h) == 2 && w >= 640 && h >= 360 &&
+            w <= 7680 && h <= 4320) {
+            v.window_w = w;
+            v.window_h = h;
+        }
     } else if (key == "fullscreen") {
         v.fullscreen = i != 0 ? 1 : 0;
     } else if (key == "hair_shadows") {
@@ -154,6 +165,11 @@ void Load() {
     v.startup_model_lod = v.model_lod;
     v.startup_output_res = v.output_res;
     v.startup_live_resolution = v.live_resolution;
+    // The launcher's former environment variables still override the file (scripts, tests).
+    if (const char* fsr1 = std::getenv("BB_FSR1")) v.scaler = fsr1[0] == '1' ? 1 : 0;
+    if (const char* rcas = std::getenv("BB_RCAS"); rcas && rcas[0] == '0') v.sharpening = -1;
+    else if (const char* att = std::getenv("BB_RCAS_ATTENUATION")) Set(v, "sharpening", att);
+    if (const char* size = std::getenv("BB_WINDOW_SIZE")) Set(v, "window_size", size);
     // As runtime_settings.c read them for the eboot patches.
     if (const char* size = std::getenv("BB_RENDER_SIZE")) Set(v, "render_res", size);
     if (const char* shadows = std::getenv("BB_SHADOW_QUALITY")) Set(v, "shadow_quality", shadows);
@@ -257,6 +273,10 @@ void Save() {
                  shadow_names[std::clamp(v.shadow_quality.load(), 0, 2)]);
     std::fprintf(file, "hair_shadows=%d\n", int(v.hair_shadows.load()));
     if (v.fullscreen >= 0) std::fprintf(file, "fullscreen=%d\n", v.fullscreen.load());
+    std::fprintf(file, "scaler=%s\n", v.scaler == 1 ? "fsr1" : "bilinear");
+    if (v.sharpening < 0) std::fprintf(file, "sharpening=off\n");
+    else std::fprintf(file, "sharpening=%d\n", v.sharpening.load());
+    std::fprintf(file, "window_size=%dx%d\n", v.window_w.load(), v.window_h.load());
     std::fclose(file);
     std::set<std::string> written;
     if (FILE* now = std::fopen(Path(), "r")) {
@@ -307,6 +327,20 @@ extern "C" int bbgpu_hair_shadows() {
 }
 extern "C" void bbgpu_set_hair_shadows(int on) {
     Get().hair_shadows = on != 0;
+    Save();
+}
+extern "C" int bbgpu_scaler() {
+    return Get().scaler;
+}
+extern "C" void bbgpu_set_scaler(int scaler) {
+    Get().scaler = scaler ? 1 : 0;
+    Save();
+}
+extern "C" int bbgpu_sharpening() {
+    return Get().sharpening;
+}
+extern "C" void bbgpu_set_sharpening(int attenuation) {
+    Get().sharpening = attenuation < 0 ? -1 : std::clamp(attenuation, 0, 1000);
     Save();
 }
 extern "C" void bbgpu_set_fps_limit(int fps) {

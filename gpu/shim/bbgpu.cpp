@@ -227,13 +227,9 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
     s32 width = config->width, height = config->height;
     // bbport: BB_WINDOW_SIZE=WxH: the window's size (the game's frame is scaled to it, with
     // FSR 1 when BB_FSR1=1). Fullscreen uses the desktop's size.
-    if (const char* size = std::getenv("BB_WINDOW_SIZE")) {
-        int w = 0, h = 0;
-        if (std::sscanf(size, "%dx%d", &w, &h) == 2 && w >= 640 && h >= 360 && w <= 7680 && h <= 4320) {
-            width = w;
-            height = h;
-        }
-    }
+    // bbport.ini window_size (launcher), BB_WINDOW_SIZE overriding it (BbSettings::Load).
+    width = BbSettings::Get().window_w;
+    height = BbSettings::Get().window_h;
     g_window_thread = std::thread([title, width, height] {
         Common::SetCurrentThreadName("bb:window");
         auto* window = new Frontend::WindowSDL(width, height, title.c_str());

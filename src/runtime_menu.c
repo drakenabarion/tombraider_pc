@@ -186,6 +186,27 @@ void bbgpu_set_hair_shadows(int on);
 static const char *hair_get(void) { return bbgpu_hair_shadows() ? "On (PS4)" : "Off (improved stability)"; }
 static void hair_change(int dir) { (void)dir; bbgpu_set_hair_shadows(!bbgpu_hair_shadows()); }
 
+/* Upscaling and Sharpening (bbport.ini scaler, sharpening, live): the game's frame scaled to
+ * the window or screen with FSR 1 or bilinear, then RCAS (only while sizes differ). */
+int bbgpu_scaler(void);
+void bbgpu_set_scaler(int scaler);
+int bbgpu_sharpening(void);
+void bbgpu_set_sharpening(int attenuation);
+static const char *scaler_get(void) { return bbgpu_scaler() ? "FSR 1" : "Bilinear"; }
+static void scaler_change(int dir) { (void)dir; bbgpu_set_scaler(!bbgpu_scaler()); }
+static const int sharpen_values[]={-1,1000,500,250,0};
+static const char *const sharpen_labels[]={"$Menu_Off","Low","Medium","High","Maximum"};
+enum { SHARPEN_COUNT=5 };
+static int sharpen_index(void) {
+    const int v=bbgpu_sharpening();
+    for (int i=0;i<SHARPEN_COUNT;++i) if (sharpen_values[i]==v) return i;
+    return 2;
+}
+static const char *sharpen_get(void) { return sharpen_labels[sharpen_index()]; }
+static void sharpen_change(int dir) {
+    bbgpu_set_sharpening(sharpen_values[(sharpen_index()+dir+SHARPEN_COUNT)%SHARPEN_COUNT]);
+}
+
 typedef struct { const char *key; const char *(*get)(void); void (*change)(int dir); } PortSetting;
 static const PortSetting port_settings[]={
     {"fullscreen",fullscreen_get,fullscreen_change},
@@ -193,6 +214,8 @@ static const PortSetting port_settings[]={
     {"render_res",render_get,render_change},
     {"shadows",shadow_get,shadow_change},
     {"hair_shadows",hair_get,hair_change},
+    {"scaler",scaler_get,scaler_change},
+    {"sharpening",sharpen_get,sharpen_change},
 };
 static const PortSetting *volatile focused_setting;
 

@@ -80,6 +80,12 @@ struct Values {
     std::atomic<bool> hair_shadows{true};
     /// Fullscreen at start (window.cpp); -1: not chosen yet (windowed). BB_FULLSCREEN overrides.
     std::atomic<int> fullscreen{-1};
+    /// The game's frame scaled to the window or screen (vk_presenter.cpp, live): scaler 1 FSR 1
+    /// (EASU), 0 bilinear; sharpening: RCAS attenuation 0 (strongest) .. 1000, -1 off. Window
+    /// size (windowed, at start): bbgpu.cpp. Env BB_FSR1, BB_RCAS(_ATTENUATION), BB_WINDOW_SIZE.
+    std::atomic<int> scaler{1};
+    std::atomic<int> sharpening{500};
+    std::atomic<int> window_w{1920}, window_h{1080};
     int startup_render_w = 1920, startup_render_h = 1080, startup_shadow_quality = 0;
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.
     std::atomic<bool> fsr4_auto_exposure{true};
