@@ -1,11 +1,15 @@
-**Tomb Raider: Definitive Edition (PS4) running natively on Linux.** Built on bbport → SuperMedo's Windows port → uncharted_pc → virtualon_pc, with shadPS4's video core. **No game files are included.**
+**Tomb Raider: Definitive Edition (PS4) running natively on Linux and Windows.** Built on bbport → SuperMedo's Windows port → uncharted_pc → virtualon_pc, with shadPS4's video core. **No game files are included.**
 
 ### What you need
 - Your own decrypted dump of CUSA00109 with the 1.01 update copied over it (the folder with `eboot.bin` and `sce_module`).
-- Linux x86-64 with `python3`, and a Vulkan 1.3 GPU with a current driver.
+- **Linux:** x86-64 with `python3`, and a Vulkan 1.3 GPU with a current driver.
+- **Windows:** Windows 10 or 11 (x64) and a Vulkan 1.3 GPU with a current driver.
 
 ### Running
-Make `Tomb-Raider-DE-x86_64.AppImage` executable and start it, set the game folder on the Game page and press Play. The first start prepares the game executable. Saves, caches and settings go to `~/.local/share/tombraider`. Insert or L3+R3 opens the settings overlay.
+- **Linux:** make `Tomb-Raider-DE-x86_64.AppImage` executable and start it. Saves, caches and settings go to `~/.local/share/tombraider`.
+- **Windows:** unzip `tombraider-windows.zip` and start `TombRaider.exe`. Saves and caches go to the `user` folder next to it, game settings to `bbport.ini` there.
+
+Set the game folder on the Game page and press Play. The first start prepares the game executable. Insert or L3+R3 opens the settings overlay.
 
 ### New in 0.3.0: display settings in the game's Options > Display
 All of them are also on the launcher's Display page; a change in either place is kept for both (`bbport.ini`).
@@ -26,5 +30,4 @@ All of them are also on the launcher's Display page; a change in either place is
 ### Limitations
 - **Frame rates above 60** are experimental: shadows may look slightly different at 240 FPS.
 - **Shader compilation:** shaders compile on first use, so a new area can hitch briefly; changing Shadow Quality to or from Highest compiles them again.
-- Linux only for now; a Windows build follows.
 - Online features report offline.

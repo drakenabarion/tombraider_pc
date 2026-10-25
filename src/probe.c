@@ -1125,7 +1125,9 @@ int main(int argc, char **argv) {
         runtime_thread_attach_main();
         runtime_set_procparam(image+procparam);
         runtime_set_guest_fpu();
+#ifndef _WIN32
         runtime_hwbp_thread_start(); /* BB_HWBP_WATCH: the main thread too */
+#endif
         /* Dependencies start in link order (libc first), as the PS4 dynamic linker does. */
         for (uint64_t m=0;m<module_count;++m) {
             printf("Starting linked module %" PRIu64 " at image offset 0x%" PRIx64 "; native bindings=%" PRIu64 "\n",m,modules[m].init,nb);
