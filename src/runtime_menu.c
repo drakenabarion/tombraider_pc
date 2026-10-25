@@ -180,12 +180,19 @@ static void shadow_change(int dir) {
     bbgpu_set_shadow_quality((q+dir+SHADOW_COUNT)%SHADOW_COUNT);
 }
 
+/* Hair shadows (bbport.ini hair_shadows, live): Lara's TressFX hair in the shadow atlas. */
+int bbgpu_hair_shadows(void);
+void bbgpu_set_hair_shadows(int on);
+static const char *hair_get(void) { return bbgpu_hair_shadows() ? "On (PS4)" : "Off (improved stability)"; }
+static void hair_change(int dir) { (void)dir; bbgpu_set_hair_shadows(!bbgpu_hair_shadows()); }
+
 typedef struct { const char *key; const char *(*get)(void); void (*change)(int dir); } PortSetting;
 static const PortSetting port_settings[]={
     {"fullscreen",fullscreen_get,fullscreen_change},
     {"fps",fps_get,fps_change},
     {"render_res",render_get,render_change},
     {"shadows",shadow_get,shadow_change},
+    {"hair_shadows",hair_get,hair_change},
 };
 static const PortSetting *volatile focused_setting;
 

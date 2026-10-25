@@ -72,9 +72,12 @@ struct Values {
     /// Frame limit with the fast vblank (BB_VBLANK_HZ=0); BB_FPS_LIMIT overrides. Live.
     std::atomic<int> fps_limit{60};
     /// Applied at the next start (src/runtime_settings.c, probe.c): the game's render size and
-    /// shadow quality (0 PS4, 1 high, 2 highest). Startup values: what this session runs with.
+    /// shadow quality (0 PS4, 1 high, 2 highest, 3 ultra). Startup values: what this session runs with.
     std::atomic<int> render_w{1920}, render_h{1080};
     std::atomic<int> shadow_quality{0};
+    /// TressFX hair drawn into the shadow atlas (Lara's hair shadows); off skips that pass
+    /// (vk_rasterizer.cpp). Live.
+    std::atomic<bool> hair_shadows{true};
     int startup_render_w = 1920, startup_render_h = 1080, startup_shadow_quality = 0;
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.
     std::atomic<bool> fsr4_auto_exposure{true};

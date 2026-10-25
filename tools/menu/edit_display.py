@@ -14,7 +14,8 @@ import sys
 ROWS = [('fullscreen', 'Fullscreen', 'Show the game on the whole screen or in a window.'),
         ('fps', 'Frame Rate', 'Frames per second. Above 60 is experimental: the game was made for 30 and 60.'),
         ('render_res', 'Render Resolution', 'The resolution the game renders at. Applies the next time the game starts.'),
-        ('shadows', 'Shadow Quality', 'PS4: the original shadows. High: twice the resolution. Highest: also softer edges. Applies the next time the game starts.')]
+        ('shadows', 'Shadow Quality', 'PS4: the original shadows. High: twice the resolution. Highest: also softer edges. Applies the next time the game starts.'),
+        ('hair_shadows', 'Hair Shadows', "Shadows cast by Lara's hair. Off removes their flicker for a more stable image.")]
 
 src = open(sys.argv[1], encoding='utf-8').read().replace('\r', '')
 # trace() calls: the game's debug output, nothing reads it (keeps the movie in its space).

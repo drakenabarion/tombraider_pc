@@ -10,6 +10,7 @@
 #include <mutex>
 #include <thread>
 #include <map>
+#include "bbport_settings.h"
 #include "core/libraries/videoout/driver.h"
 #include <xxhash.h>
 #include "video_core/renderer_vulkan/ui_composition.h"
@@ -1305,6 +1306,13 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     }
     if (SkipShader(pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash)) {
         return; // bbport: BB_SKIP_SHADERS also matches vertex shaders
+    }
+    // bbport: Hair Shadows off (bbport.ini hair_shadows): Tomb Raider's TressFX hair drawn into
+    // the shadow atlas (depth only, this vertex shader) is skipped; strands that move every
+    // frame made Lara's self-shadow flicker.
+    if (!BbSettings::Get().hair_shadows.load(std::memory_order_relaxed) &&
+        pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash == 0x99018ed496a01b1dull) {
+        return;
     }
     const auto& regs = Regs();
     // bbport: the pass copying a finished frame to a display buffer; the previous draw's
@@ -2895,8 +2903,18 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
         }
         return out;
     }();
+    // BB_TRACE_TRIGGER=<file>: buffer traces start once that file exists (created from outside
+    // when the game is at the place to trace), so menus do not use up BB_TRACE_COUNT.
+    static const char* const trace_trigger = std::getenv("BB_TRACE_TRIGGER");
+    static bool trace_open = !trace_trigger;
+    static u32 trace_polls = 0;
+    if (!trace_open && !trace_hashes.empty() && (++trace_polls & 255) == 0 &&
+        std::filesystem::exists(trace_trigger)) {
+        trace_open = true;
+        std::printf("Trace: triggered\n");
+    }
     const auto trace_it = std::ranges::find(trace_hashes, u32(stage.pgm_hash));
-    const bool traced_stage = trace_it != trace_hashes.end();
+    const bool traced_stage = trace_open && trace_it != trace_hashes.end();
     // BB_TRACE_COUNT: how many draws (default 6); each line also names render target 0.
     static const u32 trace_count = [] {
         const char* env = std::getenv("BB_TRACE_COUNT");

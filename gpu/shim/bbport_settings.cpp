@@ -71,6 +71,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         }
     } else if (key == "shadow_quality") {
         v.shadow_quality = value == "highest" ? 2 : value == "high" ? 1 : 0;
+    } else if (key == "hair_shadows") {
+        v.hair_shadows = i != 0;
     } else if (key == "fps_limit") {
         v.fps_limit = std::clamp(i, 0, 1000);
     } else if (key == "fsr4_auto_exposure") {
@@ -251,6 +253,7 @@ void Save() {
     static constexpr const char* shadow_names[] = {"ps4", "high", "highest"};
     std::fprintf(file, "render_res=%dx%d\nshadow_quality=%s\n", v.render_w.load(), v.render_h.load(),
                  shadow_names[std::clamp(v.shadow_quality.load(), 0, 2)]);
+    std::fprintf(file, "hair_shadows=%d\n", int(v.hair_shadows.load()));
     std::fclose(file);
     std::set<std::string> written;
     if (FILE* now = std::fopen(Path(), "r")) {
@@ -294,6 +297,13 @@ extern "C" int bbgpu_shadow_quality(int* startup) {
 }
 extern "C" void bbgpu_set_shadow_quality(int quality) {
     Get().shadow_quality = std::clamp(quality, 0, 2);
+    Save();
+}
+extern "C" int bbgpu_hair_shadows() {
+    return Get().hair_shadows ? 1 : 0;
+}
+extern "C" void bbgpu_set_hair_shadows(int on) {
+    Get().hair_shadows = on != 0;
     Save();
 }
 extern "C" void bbgpu_set_fps_limit(int fps) {
